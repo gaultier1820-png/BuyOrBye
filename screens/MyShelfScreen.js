@@ -18,6 +18,7 @@ import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import {
   loadBarcodeResults,
   removeBarcodeResult,
@@ -113,6 +114,7 @@ export default function MyShelfScreen() {
           brand: e.brand,
           notes: e.notes != null ? String(e.notes) : '',
           imageUrl: e.imageUrl != null ? String(e.imageUrl) : null,
+          category: e.category || null,
         };
       })
       .sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
@@ -136,23 +138,10 @@ export default function MyShelfScreen() {
     return name.includes(q) || brand.includes(q) || notes.includes(q);
   });
 
-  const handleDelete = (barcode) => {
-    Alert.alert(
-      'Удалить?',
-      `Удалить товар из истории?`,
-      [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Удалить',
-          style: 'destructive',
-          onPress: async () => {
-            const next = await removeBarcodeResult(barcode, rawResults);
-            setRawResults(next);
-            setItems((prev) => prev.filter((i) => i.barcode !== barcode));
-          },
-        },
-      ]
-    );
+  const handleDelete = async (barcode) => {
+    const next = await removeBarcodeResult(barcode, rawResults);
+    setRawResults(next);
+    setItems((prev) => prev.filter((i) => i.barcode !== barcode));
   };
 
   const handleClearAll = () => {
@@ -276,54 +265,63 @@ export default function MyShelfScreen() {
 
   const renderItem = ({ item, index }) => {
     const displayName = getDisplayName(item) || item.barcode;
+    
+    const renderRightActions = (progress, dragX) => {
+      const scale = dragX.interpolate({
+        inputRange: [-80, 0],
+        outputRange: [1, 0],
+        extrapolate: 'clamp',
+      });
+      return (
+        <TouchableOpacity
+          style={styles.deleteAction}
+          onPress={() => handleDelete(item.barcode)}
+        >
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Ionicons name="trash-outline" size={26} color="#fff" />
+          </Animated.View>
+        </TouchableOpacity>
+      );
+    };
+
     return (
       <AnimatedCard index={index}>
-        <TouchableOpacity
-          style={styles.cardWrap}
-          onPress={() => openEditItem(item)}
-          activeOpacity={0.9}
-        >
-          <BlurView intensity={55} tint="dark" style={styles.card}>
-            <ProductImage imageUrl={item.imageUrl} size={CARD_IMAGE_SIZE} />
-            <View style={styles.cardContent}>
-              <Text style={styles.productName} numberOfLines={2}>
-                {displayName}
-              </Text>
-              {item.notes ? (
-                <Text style={styles.notes} numberOfLines={2}>
-                  {item.notes}
-                </Text>
-              ) : (
-                <Text style={styles.notesPlaceholder}>Нажмите, чтобы добавить заметку</Text>
-              )}
-              <View style={styles.row}>
-                <View style={[styles.badge, item.result === 'like' ? styles.badgeLike : styles.badgeDislike]}>
-                  <Text style={styles.badgeText}>{item.result === 'like' ? 'Лайк' : 'Дизлайк'}</Text>
+        <Swipeable renderRightActions={renderRightActions} containerStyle={styles.swipeContainer}>
+          <TouchableOpacity
+            style={styles.cardContainer}
+            onPress={() => openEditItem(item)}
+            activeOpacity={0.9}
+          >
+            <View style={[styles.verdictIndicator, item.result === 'like' ? styles.indicatorLike : styles.indicatorDislike]} />
+            
+            <View style={styles.cardInner}>
+              <ProductImage imageUrl={item.imageUrl} size={CARD_IMAGE_SIZE} />
+              <View style={styles.cardContent}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.productName} numberOfLines={1}>{displayName}</Text>
+                  <Text style={styles.date}>{formatDate(item.scannedAt).split(',')[0]}</Text>
                 </View>
-                <Text style={styles.date}>{formatDate(item.scannedAt)}</Text>
+                
+                {item.category && (
+                  <View style={styles.categoryTag}>
+                    <Text style={styles.categoryText}>{item.category}</Text>
+                  </View>
+                )}
+
+                <Text style={styles.notes} numberOfLines={2}>
+                  {item.notes ? item.notes : <Text style={styles.notesPlaceholder}>Нет заметок...</Text>}
+                </Text>
               </View>
-              {displayName === item.barcode ? null : (
-                <Text style={styles.barcodeSmall}>Штрихкод: {item.barcode}</Text>
-              )}
             </View>
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleDelete(item.barcode);
-              }}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Ionicons name="trash-outline" size={22} color="#f44336" />
-            </TouchableOpacity>
-          </BlurView>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </Swipeable>
       </AnimatedCard>
     );
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#121212' }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Моя Полка</Text>
         <TouchableOpacity style={styles.clearButton} onPress={handleClearAll} activeOpacity={0.8}>
@@ -363,8 +361,9 @@ export default function MyShelfScreen() {
 
       {items.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>Пока нет сохранённых товаров</Text>
-          <Text style={styles.emptySubtext}>Сканируйте штрихкоды во вкладке «Сканер»</Text>
+          <Ionicons name="basket-outline" size={64} color="rgba(255,255,255,0.2)" style={{ marginBottom: 16 }} />
+          <Text style={styles.emptyText}>Ваша полка пуста</Text>
+          <Text style={styles.emptySubtext}>Начните сканировать товары!</Text>
         </View>
       ) : filteredItems.length === 0 ? (
         <View style={styles.empty}>
@@ -452,13 +451,14 @@ export default function MyShelfScreen() {
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#121212',
   },
   header: {
     flexDirection: 'row',
@@ -538,81 +538,96 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     paddingBottom: 32,
+    paddingTop: 8,
   },
-  cardWrap: {
-    borderRadius: 18,
+  swipeContainer: {
+    marginBottom: 0,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  cardContainer: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 16,
+    flexDirection: 'row',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  card: {
+  verdictIndicator: {
+    width: 6,
+    height: '100%',
+  },
+  indicatorLike: { backgroundColor: '#4CAF50' },
+  indicatorDislike: { backgroundColor: '#F44336' },
+  cardInner: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 14,
-    overflow: 'hidden',
-    borderRadius: 18,
+    padding: 12,
+    alignItems: 'center',
   },
   cardImage: {
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.2)',
-    marginRight: 14,
+    marginRight: 12,
   },
   placeholderImage: {
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
-  cardContent: { flex: 1 },
+  cardContent: { flex: 1, justifyContent: 'center' },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   productName: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: 'bold',
+    flex: 1,
+    marginRight: 8,
+  },
+  date: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+  },
+  categoryTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     marginBottom: 6,
   },
+  categoryText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
   notes: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 15,
-    marginBottom: 6,
-    lineHeight: 20,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    lineHeight: 18,
   },
   notesPlaceholder: {
     color: 'rgba(255,255,255,0.4)',
-    fontSize: 14,
-    marginBottom: 6,
     fontStyle: 'italic',
   },
-  row: {
-    flexDirection: 'row',
+  deleteAction: {
+    backgroundColor: '#D32F2F',
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
-  },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  badgeLike: { backgroundColor: 'rgba(76, 175, 80, 0.9)' },
-  badgeDislike: { backgroundColor: 'rgba(244, 67, 54, 0.9)' },
-  badgeText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  date: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 13,
-  },
-  barcodeSmall: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  deleteButton: {
-    padding: 6,
+    width: 80,
+    height: '100%',
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
   },
   separator: {
     height: 12,

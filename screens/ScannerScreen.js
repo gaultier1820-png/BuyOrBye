@@ -15,9 +15,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView, TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -25,7 +25,8 @@ import Animated, {
   runOnJS,
   interpolate,
 } from 'react-native-reanimated';
-import { loadBarcodeResults, saveBarcodeResult } from '../storage';
+import { LinearGradient } from 'expo-linear-gradient';
+import { loadBarcodeResults, saveBarcodeResult, removeBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
 const IMAGE_SIZE = 100;
@@ -62,15 +63,27 @@ export default function ScannerScreen() {
   const [productLoading, setProductLoading] = useState(false);
   const [modalNotes, setModalNotes] = useState('');
   const [existingVerdict, setExistingVerdict] = useState(null);
+  const [lastAction, setLastAction] = useState(null);
+  const [lastScannedDate, setLastScannedDate] = useState(null);
 
   // Reanimated Shared Values
   const translateX = useSharedValue(0);
+  const hapticTriggered = useSharedValue(false);
+  const entranceTranslateY = useSharedValue(500);
 
   useFocusEffect(
     useCallback(() => {
       loadSavedResults();
     }, [])
   );
+
+  useEffect(() => {
+    if (showModal) {
+      entranceTranslateY.value = withSpring(0, { damping: 12, stiffness: 100 });
+    } else {
+      entranceTranslateY.value = 500;
+    }
+  }, [showModal]);
 
   const loadSavedResults = async () => {
     const data = await loadBarcodeResults();
@@ -95,6 +108,7 @@ export default function ScannerScreen() {
       setSelectedImage(saved.imageUrl || null);
       setModalNotes(saved.notes || '');
       setExistingVerdict(saved.result);
+      setLastScannedDate(saved.dateString || (saved.scannedAt ? new Date(saved.scannedAt).toLocaleDateString() : null));
       setProductLoading(false);
       setIsLoading(false);
       setShowModal(true);
@@ -112,6 +126,7 @@ export default function ScannerScreen() {
     setSelectedImage(null);
     setModalNotes('');
     setExistingVerdict(null);
+    setLastScannedDate(null);
     setShowModal(true);
     translateX.value = 0;
 
@@ -208,6 +223,32 @@ export default function ScannerScreen() {
   };
 
   const handleSwipeComplete = (verdict) => {
+    if (existingVerdict && existingVerdict !== verdict) {
+      Alert.alert(
+        'Change Verdict?',
+        `You previously ${existingVerdict === 'like' ? 'liked' : 'disliked'} this product. Are you sure you want to move it to ${verdict === 'like' ? 'Liked' : 'Disliked'}?`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => {
+              translateX.value = withSpring(0);
+            },
+          },
+          { text: 'Confirm', onPress: () => finishSwipe(verdict) },
+        ]
+      );
+    } else {
+      finishSwipe(verdict);
+    }
+  };
+
+  const finishSwipe = (verdict) => {
+    if (verdict === 'like') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
     saveResult(verdict);
   };
 
@@ -215,8 +256,15 @@ export default function ScannerScreen() {
     .activeOffsetX([-20, 20])
     .onUpdate((event) => {
       translateX.value = event.translationX;
+      if (Math.abs(event.translationX) > 100 && !hapticTriggered.value) {
+        hapticTriggered.value = true;
+        runOnJS(Haptics.selectionAsync)();
+      } else if (Math.abs(event.translationX) < 100 && hapticTriggered.value) {
+        hapticTriggered.value = false;
+      }
     })
     .onEnd(() => {
+      hapticTriggered.value = false;
       if (Math.abs(translateX.value) > 100) {
         const direction = translateX.value > 0 ? 'like' : 'dislike';
         const targetX = direction === 'like' ? width + 200 : -width - 200;
@@ -231,25 +279,39 @@ export default function ScannerScreen() {
   const rCardStyle = useAnimatedStyle(() => {
     const rotate = interpolate(translateX.value, [-width, width], [-15, 15]);
     return {
-      transform: [{ translateX: translateX.value }, { rotate: `${rotate}deg` }],
+      transform: [
+        { translateX: translateX.value },
+        { translateY: entranceTranslateY.value },
+        { rotate: `${rotate}deg` }
+      ],
     };
   });
 
-  const rLeftGlowStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, -150], [0, 0.6], 'clamp'),
+  const rLeftGradientStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, -150], [0, 1], 'clamp'),
   }));
 
-  const rRightGlowStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, 150], [0, 0.6], 'clamp'),
+  const rRightGradientStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, 150], [0, 1], 'clamp'),
   }));
 
   const saveResult = async (result) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Save state for Undo
+    setLastAction({
+      barcode: currentBarcode,
+      productName: editableName,
+      imageUrl: selectedImage,
+      notes: modalNotes,
+      existingVerdict: existingVerdict,
+      lastScannedDate: lastScannedDate,
+    });
+
     try {
       const newResults = await saveBarcodeResult(currentBarcode, result, savedResults, {
         productName: editableName.trim() || undefined,
         imageUrl: selectedImage || undefined,
         notes: modalNotes.trim(),
+        dateString: new Date().toLocaleDateString(),
       });
       setSavedResults(newResults);
       
@@ -261,6 +323,7 @@ export default function ScannerScreen() {
       setEditableName('');
       setSelectedImage(null);
       setExistingVerdict(null);
+      setLastScannedDate(null);
       translateX.value = 0;
     } catch (error) {
       console.error('Error saving result:', error);
@@ -268,7 +331,33 @@ export default function ScannerScreen() {
     }
   };
 
+  const handleUndo = async () => {
+    if (!lastAction) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    try {
+      const newResults = await removeBarcodeResult(lastAction.barcode, savedResults);
+      setSavedResults(newResults);
+      
+      setScanned(true);
+      setCurrentBarcode(lastAction.barcode);
+      currentBarcodeRef.current = lastAction.barcode;
+      setEditableName(lastAction.productName);
+      setSelectedImage(lastAction.imageUrl);
+      setModalNotes(lastAction.notes);
+      setExistingVerdict(lastAction.existingVerdict);
+      setLastScannedDate(lastAction.lastScannedDate);
+      
+      setLastAction(null);
+      setShowModal(true);
+      translateX.value = 0;
+    } catch (error) {
+      console.error('Undo error:', error);
+    }
+  };
+
   const closeModal = () => {
+    Haptics.selectionAsync();
     setShowModal(false);
     setScanned(false);
     setCurrentBarcode(null);
@@ -277,6 +366,7 @@ export default function ScannerScreen() {
     setEditableName('');
     setSelectedImage(null);
     setExistingVerdict(null);
+    setLastScannedDate(null);
     translateX.value = 0;
   };
 
@@ -342,15 +432,31 @@ export default function ScannerScreen() {
         </View>
       )}
 
+      {!showModal && lastAction && (
+        <TouchableOpacity style={styles.undoButton} onPress={handleUndo}>
+          <Ionicons name="arrow-undo" size={24} color="#fff" />
+        </TouchableOpacity>
+      )}
+
       {showModal && (
         <View style={styles.modalOverlay}>
-          {/* Glow Overlays */}
-          <Animated.View
-            style={[styles.glowOverlay, { backgroundColor: 'red', right: '50%', left: 0 }, rLeftGlowStyle]}
-          />
-          <Animated.View
-            style={[styles.glowOverlay, { backgroundColor: '#4CAF50', left: '50%', right: 0 }, rRightGlowStyle]}
-          />
+          {/* Iridescent Side Gradients */}
+          <Animated.View style={[styles.gradientSide, styles.gradientLeft, rLeftGradientStyle]}>
+            <LinearGradient
+              colors={['transparent', 'rgba(255, 50, 50, 0.5)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ flex: 1 }}
+            />
+          </Animated.View>
+          <Animated.View style={[styles.gradientSide, styles.gradientRight, rRightGradientStyle]}>
+            <LinearGradient
+              colors={['transparent', 'rgba(50, 255, 50, 0.5)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ flex: 1 }}
+            />
+          </Animated.View>
 
           <View style={styles.modalBackdrop}>
             <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
@@ -359,13 +465,6 @@ export default function ScannerScreen() {
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={closeModal}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={20} color="#fff" />
-              </TouchableOpacity>
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
                 <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
@@ -389,19 +488,17 @@ export default function ScannerScreen() {
                 multiline
               />
               {existingVerdict && (
-                <View style={[
-                  styles.verdictBadge,
-                  existingVerdict === 'like' ? styles.verdictBadgeLike : styles.verdictBadgeDislike
-                ]}>
-                  <Ionicons 
-                    name={existingVerdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
-                    size={16} 
-                    color="#fff" 
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.verdictText}>
-                    {existingVerdict === 'like' ? 'ВЫ ЛАЙКНУЛИ' : 'ВЫ ДИЗЛАЙКНУЛИ'}
-                  </Text>
+                <View style={styles.verdictContainer}>
+                  <View style={styles.circularIcon}>
+                    <Ionicons 
+                      name={existingVerdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                      size={20} 
+                      color="#fff" 
+                    />
+                  </View>
+                  {lastScannedDate && (
+                    <Text style={styles.dateText}>Added on: {lastScannedDate}</Text>
+                  )}
                 </View>
               )}
               {currentBarcode ? (
@@ -417,10 +514,28 @@ export default function ScannerScreen() {
                 multiline
                 maxLength={300}
               />
-              <View style={styles.swipeHint}>
-                <Text style={styles.swipeHintText}>← Dislike  |  Like →</Text>
+              <View style={styles.actionButtonsContainer}>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => handleSwipeComplete('dislike')}
+                >
+                  <MaterialCommunityIcons name="thumb-down-outline" size={30} color="grey" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => handleSwipeComplete('like')}
+                >
+                  <MaterialCommunityIcons name="thumb-up-outline" size={30} color="grey" />
+                </TouchableOpacity>
               </View>
             </BlurView>
+            <GHTouchableOpacity
+              style={styles.closeButton}
+              onPress={closeModal}
+              hitSlop={{ top: 30, bottom: 30, left: 30, right: 30 }}
+            >
+              <Ionicons name="close" size={20} color="#000" />
+            </GHTouchableOpacity>
           </Animated.View>
           </GestureDetector>
         </View>
@@ -494,10 +609,17 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
   },
-  glowOverlay: {
+  gradientSide: {
     position: 'absolute',
     top: 0,
     bottom: 0,
+    width: width * 0.2,
+    zIndex: 5,
+  },
+  gradientLeft: { left: 0 },
+  gradientRight: { right: 0 },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
   },
   modalOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -512,15 +634,17 @@ const styles = StyleSheet.create({
   modalContentWrap: {
     width: width * 0.9,
     borderRadius: 24,
-    overflow: 'hidden',
+    overflow: 'visible',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.2)',
+    position: 'relative',
   },
   modalContent: {
     borderRadius: 24,
     padding: 28,
     alignItems: 'center',
     overflow: 'hidden',
+    position: 'relative',
   },
   modalTitle: {
     color: '#fff',
@@ -602,15 +726,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  swipeHint: {
-    marginTop: 10,
-    opacity: 0.7,
-  },
-  swipeHintText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   cameraActive: {
     borderWidth: 2,
     borderColor: '#4CAF50',
@@ -638,36 +753,69 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     letterSpacing: 1,
   },
-  verdictBadge: {
-    flexDirection: 'row',
+  verdictContainer: {
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginBottom: 12,
+    marginBottom: 16,
     marginTop: 4,
   },
-  verdictBadgeLike: {
-    backgroundColor: 'rgba(76, 175, 80, 0.8)',
+  circularIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'white',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+    backgroundColor: 'transparent',
   },
-  verdictBadgeDislike: {
-    backgroundColor: 'rgba(244, 67, 54, 0.8)',
-  },
-  verdictText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
+  dateText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
   },
   closeButton: {
     position: 'absolute',
-    top: 16,
-    right: 16,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    top: -10,
+    right: -10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'white',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 9999,
+    elevation: 10,
+    borderWidth: 2,
+    borderColor: '#000',
+  },
+  undoButton: {
+    position: 'absolute',
+    bottom: 60,
+    left: 40,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+    width: '100%',
+    paddingHorizontal: 40,
+  },
+  actionButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'grey',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
