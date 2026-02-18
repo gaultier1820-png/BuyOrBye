@@ -61,6 +61,7 @@ export default function ScannerScreen() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [productLoading, setProductLoading] = useState(false);
   const [modalNotes, setModalNotes] = useState('');
+  const [existingVerdict, setExistingVerdict] = useState(null);
 
   // Reanimated Shared Values
   const translateX = useSharedValue(0);
@@ -76,38 +77,32 @@ export default function ScannerScreen() {
     setSavedResults(data);
   };
 
-  const getResultValue = (entry) => {
-    if (!entry) return null;
-    return typeof entry === 'string' ? entry : entry.result;
-  };
-
   const handleBarCodeScanned = async ({ data }) => {
     if (!isReadyToScan) return;
     setIsReadyToScan(false);
 
     // Check if already saved (using most recent data)
     const saved = savedResults[data];
-    const resultValue = getResultValue(saved);
 
-    if (resultValue) {
-      setScanned(true);
-      setCurrentBarcode(data);
-      currentBarcodeRef.current = data;
-      setBarcodeResult(resultValue);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setTimeout(() => {
-        setScanned(false);
-        setBarcodeResult(null);
-        setCurrentBarcode(null);
-        currentBarcodeRef.current = null;
-      }, 2000);
-      return;
-    }
-
-    // Not saved: fetch and show modal
     setScanned(true);
     setCurrentBarcode(data);
     currentBarcodeRef.current = data;
+
+    if (saved) {
+      // Local Hit
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setEditableName(saved.productName || `Product ${data}`);
+      setSelectedImage(saved.imageUrl || null);
+      setModalNotes(saved.notes || '');
+      setExistingVerdict(saved.result);
+      setProductLoading(false);
+      setIsLoading(false);
+      setShowModal(true);
+      translateX.value = 0;
+      return;
+    }
+
+    // Local Miss
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     // Instant Reaction
@@ -116,6 +111,7 @@ export default function ScannerScreen() {
     setEditableName('Загрузка...');
     setSelectedImage(null);
     setModalNotes('');
+    setExistingVerdict(null);
     setShowModal(true);
     translateX.value = 0;
 
@@ -264,6 +260,7 @@ export default function ScannerScreen() {
       setModalNotes('');
       setEditableName('');
       setSelectedImage(null);
+      setExistingVerdict(null);
       translateX.value = 0;
     } catch (error) {
       console.error('Error saving result:', error);
@@ -279,6 +276,7 @@ export default function ScannerScreen() {
     setModalNotes('');
     setEditableName('');
     setSelectedImage(null);
+    setExistingVerdict(null);
     translateX.value = 0;
   };
 
@@ -361,6 +359,13 @@ export default function ScannerScreen() {
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={closeModal}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color="#fff" />
+              </TouchableOpacity>
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
                 <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
@@ -383,6 +388,22 @@ export default function ScannerScreen() {
                 placeholderTextColor="rgba(255,255,255,0.4)"
                 multiline
               />
+              {existingVerdict && (
+                <View style={[
+                  styles.verdictBadge,
+                  existingVerdict === 'like' ? styles.verdictBadgeLike : styles.verdictBadgeDislike
+                ]}>
+                  <Ionicons 
+                    name={existingVerdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                    size={16} 
+                    color="#fff" 
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.verdictText}>
+                    {existingVerdict === 'like' ? 'ВЫ ЛАЙКНУЛИ' : 'ВЫ ДИЗЛАЙКНУЛИ'}
+                  </Text>
+                </View>
+              )}
               {currentBarcode ? (
                 <Text style={styles.modalBarcodeSmall}>Штрихкод: {currentBarcode}</Text>
               ) : null}
@@ -616,5 +637,37 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     letterSpacing: 1,
+  },
+  verdictBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  verdictBadgeLike: {
+    backgroundColor: 'rgba(76, 175, 80, 0.8)',
+  },
+  verdictBadgeDislike: {
+    backgroundColor: 'rgba(244, 67, 54, 0.8)',
+  },
+  verdictText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
 });
