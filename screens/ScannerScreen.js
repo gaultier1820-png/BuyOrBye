@@ -45,6 +45,7 @@ export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [isReadyToScan, setIsReadyToScan] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [currentBarcode, setCurrentBarcode] = useState(null);
   const currentBarcodeRef = useRef(null);
   const [barcodeResult, setBarcodeResult] = useState(null);
@@ -103,6 +104,7 @@ export default function ScannerScreen() {
     
     // Instant Reaction
     setProductLoading(true);
+    setIsLoading(true);
     setEditableName('Загрузка...');
     setSelectedImage(null);
     setModalNotes('');
@@ -116,7 +118,7 @@ export default function ScannerScreen() {
       
       if (currentBarcodeRef.current !== data) return;
 
-      if (json.product) {
+      if (json && json.product) {
         const product = json.product;
         // Data Mapping (v0 style)
         const name = product.product_name || product.brands || data;
@@ -132,66 +134,73 @@ export default function ScannerScreen() {
     } finally {
       if (currentBarcodeRef.current === data) {
         setProductLoading(false);
+        setIsLoading(false);
       }
     }
   };
 
   const pickImage = async () => {
-    Alert.alert('Фото товара', 'Выберите источник', [
-      {
-        text: 'Камера',
-        onPress: async () => {
-          try {
-            console.log('Requesting camera permissions...');
-            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-            if (status !== 'granted') {
-              Alert.alert('Ошибка', 'Нужен доступ к камере');
-              return;
+    try {
+      Alert.alert('Фото товара', 'Выберите источник', [
+        {
+          text: 'Камера',
+          onPress: async () => {
+            try {
+              console.log('Requesting camera permissions...');
+              const { status } = await ImagePicker.requestCameraPermissionsAsync();
+              if (status !== 'granted') {
+                Alert.alert('Ошибка', 'Нужен доступ к камере');
+                return;
+              }
+              console.log('Launching camera...');
+              const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: 'images',
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.5,
+              });
+              console.log('Camera result:', result);
+              if (!result.canceled && result.assets && result.assets.length > 0) {
+                setSelectedImage(result.assets[0].uri);
+              }
+            } catch (error) {
+              console.log('Camera error:', error);
+              Alert.alert('Ошибка', 'Не удалось сделать фото');
             }
-            console.log('Launching camera...');
-            const result = await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsEditing: true,
-              aspect: [1, 1],
-              quality: 0.5,
-            });
-            console.log('Camera result:', result);
-            if (!result.canceled) {
-              setSelectedImage(result.assets[0].uri);
-            }
-          } catch (error) {
-            console.log('Camera error:', error);
-          }
+          },
         },
-      },
-      {
-        text: 'Галерея',
-        onPress: async () => {
-          try {
-            console.log('Requesting gallery permissions...');
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-              Alert.alert('Ошибка', 'Нужен доступ к галерее');
-              return;
+        {
+          text: 'Галерея',
+          onPress: async () => {
+            try {
+              console.log('Requesting gallery permissions...');
+              const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (status !== 'granted') {
+                Alert.alert('Ошибка', 'Нужен доступ к галерее');
+                return;
+              }
+              console.log('Launching gallery...');
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: 'images',
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.5,
+              });
+              console.log('Gallery result:', result);
+              if (!result.canceled && result.assets && result.assets.length > 0) {
+                setSelectedImage(result.assets[0].uri);
+              }
+            } catch (error) {
+              console.log('Gallery error:', error);
+              Alert.alert('Ошибка', 'Не удалось выбрать фото');
             }
-            console.log('Launching gallery...');
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsEditing: true,
-              aspect: [1, 1],
-              quality: 0.5,
-            });
-            console.log('Gallery result:', result);
-            if (!result.canceled) {
-              setSelectedImage(result.assets[0].uri);
-            }
-          } catch (error) {
-            console.log('Gallery error:', error);
-          }
+          },
         },
-      },
-      { text: 'Отмена', style: 'cancel' },
-    ]);
+        { text: 'Отмена', style: 'cancel' },
+      ]);
+    } catch (e) {
+      console.log('PickImage error:', e);
+    }
   };
 
   const saveResult = async (result) => {
