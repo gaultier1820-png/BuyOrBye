@@ -87,6 +87,8 @@ function getDisplayName(entry) {
 export default function MyShelfScreen() {
   const [items, setItems] = useState([]);
   const [rawResults, setRawResults] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState('all');
   const [editModal, setEditModal] = useState({
     visible: false,
     barcode: null,
@@ -122,6 +124,17 @@ export default function MyShelfScreen() {
       refresh();
     }, [refresh])
   );
+
+  const filteredItems = items.filter((item) => {
+    const matchesFilter = filter === 'all' || item.result === filter;
+    if (!matchesFilter) return false;
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const name = (item.productName || '').toLowerCase();
+    const brand = (item.brand || '').toLowerCase();
+    const notes = (item.notes || '').toLowerCase();
+    return name.includes(q) || brand.includes(q) || notes.includes(q);
+  });
 
   const handleDelete = (barcode) => {
     Alert.alert(
@@ -317,14 +330,49 @@ export default function MyShelfScreen() {
           <Text style={styles.clearButtonText}>Очистить всё</Text>
         </TouchableOpacity>
       </View>
+
+      <View style={styles.searchFilterContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Поиск..."
+          placeholderTextColor="rgba(255,255,255,0.4)"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'all' && styles.filterBtnAllActive]}
+            onPress={() => setFilter('all')}
+          >
+            <Text style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>Все</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'like' && styles.filterBtnLikeActive]}
+            onPress={() => setFilter('like')}
+          >
+            <Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Likes</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'dislike' && styles.filterBtnDislikeActive]}
+            onPress={() => setFilter('dislike')}
+          >
+            <Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Dislikes</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {items.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Пока нет сохранённых товаров</Text>
           <Text style={styles.emptySubtext}>Сканируйте штрихкоды во вкладке «Сканер»</Text>
         </View>
+      ) : filteredItems.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>Ничего не найдено</Text>
+        </View>
       ) : (
         <FlatList
-          data={items}
+          data={filteredItems}
           keyExtractor={(item) => item.barcode}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
@@ -438,6 +486,54 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  searchFilterContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    paddingTop: 8,
+  },
+  searchInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 10,
+    color: '#fff',
+    fontSize: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  filterBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  filterBtnAllActive: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  filterBtnLikeActive: {
+    backgroundColor: 'rgba(76, 175, 80, 0.3)',
+    borderColor: 'rgba(76, 175, 80, 0.5)',
+  },
+  filterBtnDislikeActive: {
+    backgroundColor: 'rgba(244, 67, 54, 0.3)',
+    borderColor: 'rgba(244, 67, 54, 0.5)',
+  },
+  filterBtnText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  filterBtnTextActive: {
+    color: '#fff',
   },
   listContent: {
     padding: 16,
