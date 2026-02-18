@@ -44,6 +44,7 @@ function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
+  const [isReadyToScan, setIsReadyToScan] = useState(false);
   const [currentBarcode, setCurrentBarcode] = useState(null);
   const currentBarcodeRef = useRef(null);
   const [barcodeResult, setBarcodeResult] = useState(null);
@@ -71,19 +72,9 @@ export default function ScannerScreen() {
     return typeof entry === 'string' ? entry : entry.result;
   };
 
-  const handleBarCodeScanned = async ({ data, bounds }) => {
-    const frameLeft = (width - 280) / 2;
-    const frameTop = (height - 180) / 2;
-    const frameRight = frameLeft + 280;
-    const frameBottom = frameTop + 180;
-    const centerX = bounds.origin.x + bounds.size.width / 2;
-    const centerY = bounds.origin.y + bounds.size.height / 2;
-    // Expanded logic area (buffer) to improve sensitivity
-    const buffer = 40;
-    if (centerX < frameLeft - buffer || centerX > frameRight + buffer || centerY < frameTop - buffer || centerY > frameBottom + buffer) {
-      return;
-    }
-    if (scanned) return;
+  const handleBarCodeScanned = async ({ data }) => {
+    if (!isReadyToScan) return;
+    setIsReadyToScan(false);
 
     // Check if already saved (using most recent data)
     const saved = savedResults[data];
@@ -111,7 +102,7 @@ export default function ScannerScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     setProductLoading(true);
-    setEditableName('');
+    setEditableName('Загрузка...');
     setSelectedImage(null);
     setModalNotes('');
     setShowModal(true);
@@ -123,14 +114,14 @@ export default function ScannerScreen() {
 
   const fetchProductData = async (barcode) => {
     try {
-      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
+      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,image_front_url,brands`);
       const json = await response.json();
       
       if (currentBarcodeRef.current !== barcode) return;
 
       const product = json.product;
-      const name = product?.product_name || product?.product_name_en || `Product ${barcode}`;
-      const image = product?.image_front_url || product?.image_url || null;
+      const name = product?.product_name || (product?.brands ? String(product.brands) : `Product ${barcode}`);
+      const image = product?.image_front_url || null;
       setEditableName(name);
       setSelectedImage(image);
     } catch (error) {
@@ -259,24 +250,13 @@ export default function ScannerScreen() {
   return (
     <View style={styles.container}>
       <CameraView
-        style={[styles.camera, StyleSheet.absoluteFillObject]}
+        style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
         facing="back"
-        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+        onBarcodeScanned={handleBarCodeScanned}
         barcodeScannerSettings={{
           barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
         }}
       />
-      <View style={styles.cameraOverlay}>
-        <View style={styles.topMask} />
-        <View style={styles.middleContainer}>
-          <View style={styles.leftMask} />
-          <View style={styles.focusedContainer}>
-            <Text style={styles.holeText}>Наведите камеру на штрихкод</Text>
-          </View>
-          <View style={styles.rightMask} />
-        </View>
-        <View style={styles.bottomMask} />
-      </View>
       {barcodeResult && currentBarcode && (
         <View style={styles.resultOverlay}>
           <BlurView intensity={60} tint="dark" style={styles.glassCard}>
@@ -291,13 +271,21 @@ export default function ScannerScreen() {
           </BlurView>
         </View>
       )}
-      {!barcodeResult && (
-        <View style={styles.instructionOverlay}>
-          <BlurView intensity={50} tint="dark" style={styles.glassPill}>
-            <Text style={styles.instructionText}>Наведите камеру на штрихкод</Text>
-          </BlurView>
-        </View>
-      )}
+
+      <View style={styles.scanButtonContainer}>
+        <TouchableOpacity
+          style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
+          onPress={() => {
+            setScanned(false);
+            setBarcodeResult(null);
+            setCurrentBarcode(null);
+            setIsReadyToScan(true);
+          }}
+        >
+          <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
+        </TouchableOpacity>
+      </View>
+
       <Modal visible={showModal} transparent animationType="fade" onRequestClose={closeModal}>
         <Animated.View style={[styles.modalOverlay, { opacity: modalOpacity }]}>
           <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
@@ -390,25 +378,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-  },
-  instructionOverlay: {
-    position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  glassPill: {
-    overflow: 'hidden',
-    borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-  },
-  instructionText: {
-    color: '#fff',
-    fontSize: 18,
   },
   resultOverlay: {
     position: 'absolute',
@@ -559,47 +528,31 @@ const styles = StyleSheet.create({
   likeButton: { backgroundColor: 'rgba(76, 175, 80, 0.85)' },
   dislikeButton: { backgroundColor: 'rgba(244, 67, 54, 0.85)' },
   buttonText: { color: '#fff', fontSize: 26, fontWeight: 'bold' },
-  cameraOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  topMask: {
-    flex: 1,
-    width: '100%',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  middleContainer: {
-    flexDirection: 'row',
-    height: 180,
-    width: '100%',
-  },
-  leftMask: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  focusedContainer: {
-    width: 280,
-    height: 180,
+  cameraActive: {
     borderWidth: 2,
-    borderColor: '#00FF00',
-    borderRadius: 10,
-    justifyContent: 'center',
+    borderColor: '#4CAF50',
+  },
+  scanButtonContainer: {
+    position: 'absolute',
+    bottom: 50,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    backgroundColor: 'transparent',
   },
-  rightMask: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+  scanButton: {
+    backgroundColor: '#2196F3',
+    paddingVertical: 20,
+    paddingHorizontal: 60,
+    borderRadius: 30,
+    elevation: 5,
   },
-  bottomMask: {
-    flex: 1,
-    width: '100%',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+  scanButtonActive: {
+    backgroundColor: '#4CAF50',
   },
-  holeText: {
+  scanButtonText: {
     color: '#fff',
-    fontSize: 16,
-    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: 'bold',
+    letterSpacing: 1,
   },
 });
