@@ -44,6 +44,7 @@ export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [currentBarcode, setCurrentBarcode] = useState(null);
+  const currentBarcodeRef = useRef(null);
   const [barcodeResult, setBarcodeResult] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [savedResults, setSavedResults] = useState({});
@@ -89,12 +90,14 @@ export default function ScannerScreen() {
     if (resultValue) {
       setScanned(true);
       setCurrentBarcode(data);
+      currentBarcodeRef.current = data;
       setBarcodeResult(resultValue);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setTimeout(() => {
         setScanned(false);
         setBarcodeResult(null);
         setCurrentBarcode(null);
+        currentBarcodeRef.current = null;
       }, 2000);
       return;
     }
@@ -102,6 +105,7 @@ export default function ScannerScreen() {
     // Not saved: fetch and show modal
     setScanned(true);
     setCurrentBarcode(data);
+    currentBarcodeRef.current = data;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     setProductLoading(true);
@@ -110,17 +114,28 @@ export default function ScannerScreen() {
     setShowModal(true);
     modalOpacity.setValue(1);
 
+    // Perform fetch in background
+    fetchProductData(data);
+  };
+
+  const fetchProductData = async (barcode) => {
     try {
-      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${data}.json`);
+      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
       const json = await response.json();
+      
+      if (currentBarcodeRef.current !== barcode) return;
+
       const product = json.product;
-      const name = product?.product_name || product?.product_name_en || `Product ${data}`;
+      const name = product?.product_name || product?.product_name_en || `Product ${barcode}`;
       const image = product?.image_front_url || product?.image_url || null;
       setProductInfo({ name, image });
     } catch (error) {
-      setProductInfo({ name: `Product ${data}`, image: null });
+      if (currentBarcodeRef.current !== barcode) return;
+      setProductInfo({ name: `Product ${barcode}`, image: null });
     } finally {
-      setProductLoading(false);
+      if (currentBarcodeRef.current === barcode) {
+        setProductLoading(false);
+      }
     }
   };
 
@@ -142,6 +157,7 @@ export default function ScannerScreen() {
         setShowModal(false);
         setScanned(false);
         setCurrentBarcode(null);
+        currentBarcodeRef.current = null;
         setModalNotes('');
         setProductInfo({ name: '', image: null });
         modalOpacity.setValue(1);
@@ -161,6 +177,7 @@ export default function ScannerScreen() {
       setShowModal(false);
       setScanned(false);
       setCurrentBarcode(null);
+      currentBarcodeRef.current = null;
       setModalNotes('');
       setProductInfo({ name: '', image: null });
       modalOpacity.setValue(1);
@@ -168,7 +185,7 @@ export default function ScannerScreen() {
   };
 
   const modalDisplayName = productLoading
-    ? 'Загрузка…'
+    ? 'Searching for product name...'
     : productInfo.name || currentBarcode;
 
   if (!permission) {
