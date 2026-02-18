@@ -1,32 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEY = 'barcodeResults';
-const OPEN_FOOD_FACTS_URL = 'https://world.openfoodfacts.org/api/v2/product';
-
-/**
- * Загружает данные о продукте по штрихкоду из Open Food Facts.
- * @param { string } barcode
- * @returns { Promise<{ productName: string | null, brand: string | null, imageUrl: string | null }> }
- */
-export async function fetchProductByBarcode(barcode) {
-  try {
-    const res = await fetch(`${OPEN_FOOD_FACTS_URL}/${barcode}.json`);
-    const data = await res.json();
-    if (data.status !== 1 || !data.product) {
-      return { productName: null, brand: null, imageUrl: null };
-    }
-    const p = data.product;
-    const productName =
-      (p.product_name && String(p.product_name).trim()) || null;
-    const brand = (p.brands && String(p.brands).trim()) || null;
-    const rawImg = p.image_small_url || p.image_url || p.image_front_small_url;
-    const imageUrl = rawImg && String(rawImg).trim() ? String(rawImg).trim() : null;
-    return { productName, brand, imageUrl };
-  } catch (e) {
-    console.error('fetchProductByBarcode:', e);
-    return { productName: null, brand: null, imageUrl: null };
-  }
-}
 
 /**
  * Нормализует значение из хранилища (поддержка старого формата).
