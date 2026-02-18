@@ -1,13 +1,11 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  Modal,
   TouchableOpacity,
   Alert,
   Dimensions,
-  Animated,
   TextInput,
   ActivityIndicator,
   Image,
@@ -19,6 +17,14 @@ import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+  interpolate,
+} from 'react-native-reanimated';
 import { loadBarcodeResults, saveBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
@@ -55,7 +61,9 @@ export default function ScannerScreen() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [productLoading, setProductLoading] = useState(false);
   const [modalNotes, setModalNotes] = useState('');
-  const modalOpacity = useRef(new Animated.Value(1)).current;
+
+  // Reanimated Shared Values
+  const translateX = useSharedValue(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -109,7 +117,7 @@ export default function ScannerScreen() {
     setSelectedImage(null);
     setModalNotes('');
     setShowModal(true);
-    modalOpacity.setValue(1);
+    translateX.value = 0;
 
     try {
       // The 'Lucky' API (v0, world)
@@ -203,6 +211,42 @@ export default function ScannerScreen() {
     }
   };
 
+  const handleSwipeComplete = (verdict) => {
+    saveResult(verdict);
+  };
+
+  const pan = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .onUpdate((event) => {
+      translateX.value = event.translationX;
+    })
+    .onEnd(() => {
+      if (Math.abs(translateX.value) > 100) {
+        const direction = translateX.value > 0 ? 'like' : 'dislike';
+        const targetX = direction === 'like' ? width + 200 : -width - 200;
+        translateX.value = withSpring(targetX, { velocity: 50 }, () => {
+          runOnJS(handleSwipeComplete)(direction);
+        });
+      } else {
+        translateX.value = withSpring(0);
+      }
+    });
+
+  const rCardStyle = useAnimatedStyle(() => {
+    const rotate = interpolate(translateX.value, [-width, width], [-15, 15]);
+    return {
+      transform: [{ translateX: translateX.value }, { rotate: `${rotate}deg` }],
+    };
+  });
+
+  const rLeftGlowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, -150], [0, 0.6], 'clamp'),
+  }));
+
+  const rRightGlowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, 150], [0, 0.6], 'clamp'),
+  }));
+
   const saveResult = async (result) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
@@ -212,33 +256,7 @@ export default function ScannerScreen() {
         notes: modalNotes.trim(),
       });
       setSavedResults(newResults);
-      Alert.alert('Сохранено', `Выбор "${result === 'like' ? 'Like' : 'Dislike'}" сохранен`, [{ text: 'OK' }]);
-      Animated.timing(modalOpacity, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }).start(() => {
-        setShowModal(false);
-        setScanned(false);
-        setCurrentBarcode(null);
-        currentBarcodeRef.current = null;
-        setModalNotes('');
-        setEditableName('');
-        setSelectedImage(null);
-        modalOpacity.setValue(1);
-      });
-    } catch (error) {
-      console.error('Error saving result:', error);
-      Alert.alert('Ошибка', 'Не удалось сохранить результат');
-    }
-  };
-
-  const closeModal = () => {
-    Animated.timing(modalOpacity, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => {
+      
       setShowModal(false);
       setScanned(false);
       setCurrentBarcode(null);
@@ -246,8 +264,22 @@ export default function ScannerScreen() {
       setModalNotes('');
       setEditableName('');
       setSelectedImage(null);
-      modalOpacity.setValue(1);
-    });
+      translateX.value = 0;
+    } catch (error) {
+      console.error('Error saving result:', error);
+      Alert.alert('Ошибка', 'Не удалось сохранить результат');
+    }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setScanned(false);
+    setCurrentBarcode(null);
+    currentBarcodeRef.current = null;
+    setModalNotes('');
+    setEditableName('');
+    setSelectedImage(null);
+    translateX.value = 0;
   };
 
   if (!permission) {
@@ -272,7 +304,7 @@ export default function ScannerScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <GestureHandlerRootView style={styles.container}>
       <CameraView
         style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
         facing="back"
@@ -296,24 +328,38 @@ export default function ScannerScreen() {
         </View>
       )}
 
-      <View style={styles.scanButtonContainer}>
-        <TouchableOpacity
-          style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
-          onPress={() => {
-            setScanned(false);
-            setBarcodeResult(null);
-            setCurrentBarcode(null);
-            setIsReadyToScan(true);
-          }}
-        >
-          <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
-        </TouchableOpacity>
-      </View>
+      {!showModal && (
+        <View style={styles.scanButtonContainer}>
+          <TouchableOpacity
+            style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
+            onPress={() => {
+              setScanned(false);
+              setBarcodeResult(null);
+              setCurrentBarcode(null);
+              setIsReadyToScan(true);
+            }}
+          >
+            <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      <Modal visible={showModal} transparent animationType="fade" onRequestClose={closeModal}>
-        <Animated.View style={[styles.modalOverlay, { opacity: modalOpacity }]}>
-          <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />
-          <Animated.View style={[styles.modalContentWrap, { opacity: modalOpacity }]}>
+      {showModal && (
+        <View style={styles.modalOverlay}>
+          {/* Glow Overlays */}
+          <Animated.View
+            style={[styles.glowOverlay, { backgroundColor: 'red', right: '50%', left: 0 }, rLeftGlowStyle]}
+          />
+          <Animated.View
+            style={[styles.glowOverlay, { backgroundColor: '#4CAF50', left: '50%', right: 0 }, rRightGlowStyle]}
+          />
+
+          <View style={styles.modalBackdrop}>
+            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+          </View>
+
+          <GestureDetector gesture={pan}>
+            <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
@@ -350,28 +396,16 @@ export default function ScannerScreen() {
                 multiline
                 maxLength={300}
               />
-              <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                  style={[styles.button, styles.likeButton]}
-                  onPress={() => saveResult('like')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.buttonText}>Like</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.dislikeButton]}
-                  onPress={() => saveResult('dislike')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.buttonText}>Dislike</Text>
-                </TouchableOpacity>
+              <View style={styles.swipeHint}>
+                <Text style={styles.swipeHintText}>← Dislike  |  Like →</Text>
               </View>
             </BlurView>
           </Animated.View>
-        </Animated.View>
-      </Modal>
+          </GestureDetector>
+        </View>
+      )}
       <StatusBar style="light" />
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -439,17 +473,27 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
   },
+  glowOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+  },
   modalOverlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContentWrap: {
     width: width * 0.9,
     borderRadius: 24,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   modalContent: {
     borderRadius: 24,
@@ -537,21 +581,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  buttonContainer: { width: '100%', gap: 16 },
-  button: {
-    paddingVertical: 24,
-    paddingHorizontal: 40,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 64,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+  swipeHint: {
+    marginTop: 10,
+    opacity: 0.7,
   },
-  likeButton: { backgroundColor: 'rgba(76, 175, 80, 0.85)' },
-  dislikeButton: { backgroundColor: 'rgba(244, 67, 54, 0.85)' },
-  buttonText: { color: '#fff', fontSize: 26, fontWeight: 'bold' },
+  swipeHintText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   cameraActive: {
     borderWidth: 2,
     borderColor: '#4CAF50',
