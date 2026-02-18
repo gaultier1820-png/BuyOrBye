@@ -17,11 +17,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import {
   loadBarcodeResults,
   removeBarcodeResult,
   clearAllBarcodeResults,
   updateBarcodeNotes,
+  saveBarcodeResult,
 } from '../storage';
 
 const CARD_IMAGE_SIZE = 72;
@@ -85,7 +87,15 @@ function getDisplayName(entry) {
 export default function MyShelfScreen() {
   const [items, setItems] = useState([]);
   const [rawResults, setRawResults] = useState({});
-  const [editModal, setEditModal] = useState({ visible: false, barcode: null, notes: '' });
+  const [editModal, setEditModal] = useState({
+    visible: false,
+    barcode: null,
+    productName: '',
+    brand: '',
+    notes: '',
+    imageUrl: null,
+    result: 'like',
+  });
 
   const refresh = useCallback(async () => {
     const data = await loadBarcodeResults();
@@ -151,23 +161,104 @@ export default function MyShelfScreen() {
     );
   };
 
-  const openEditNotes = (item) => {
+  const openEditItem = (item) => {
     setEditModal({
       visible: true,
       barcode: item.barcode,
+      productName: item.productName || '',
+      brand: item.brand || '',
       notes: item.notes || '',
+      imageUrl: item.imageUrl || null,
+      result: item.result || 'like',
     });
   };
 
-  const saveEditNotes = async () => {
-    const { barcode, notes } = editModal;
+  const pickImage = async () => {
+    try {
+      Alert.alert('Фото товара', 'Выберите источник', [
+        {
+          text: 'Камера',
+          onPress: async () => {
+            try {
+              const { status } = await ImagePicker.requestCameraPermissionsAsync();
+              if (status !== 'granted') {
+                Alert.alert('Ошибка', 'Нужен доступ к камере');
+                return;
+              }
+              const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: 'images',
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.5,
+              });
+              if (!result.canceled && result.assets && result.assets.length > 0) {
+                setEditModal((m) => ({ ...m, imageUrl: result.assets[0].uri }));
+              }
+            } catch (error) {
+              console.log('Camera error:', error);
+              Alert.alert('Ошибка', 'Не удалось сделать фото');
+            }
+          },
+        },
+        {
+          text: 'Галерея',
+          onPress: async () => {
+            try {
+              const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (status !== 'granted') {
+                Alert.alert('Ошибка', 'Нужен доступ к галерее');
+                return;
+              }
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: 'images',
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.5,
+              });
+              if (!result.canceled && result.assets && result.assets.length > 0) {
+                setEditModal((m) => ({ ...m, imageUrl: result.assets[0].uri }));
+              }
+            } catch (error) {
+              console.log('Gallery error:', error);
+              Alert.alert('Ошибка', 'Не удалось выбрать фото');
+            }
+          },
+        },
+        { text: 'Отмена', style: 'cancel' },
+      ]);
+    } catch (e) {
+      console.log('PickImage error:', e);
+    }
+  };
+
+  const handleUpdate = async () => {
+    const { barcode, productName, brand, notes, imageUrl, result } = editModal;
     if (barcode == null) return;
-    const next = await updateBarcodeNotes(barcode, notes, rawResults);
+
+    const next = await saveBarcodeResult(barcode, result, rawResults, {
+      productName,
+      brand,
+      notes,
+      imageUrl,
+    });
+
     setRawResults(next);
-    setItems((prev) =>
-      prev.map((i) => (i.barcode === barcode ? { ...i, notes: notes || '' } : i))
-    );
-    setEditModal({ visible: false, barcode: null, notes: '' });
+    const list = Object.entries(next)
+      .map(([bc, entry]) => {
+        const e = typeof entry === 'string' ? { result: entry, scannedAt: 0 } : entry;
+        return {
+          barcode: bc,
+          result: e.result,
+          scannedAt: e.scannedAt || 0,
+          productName: e.productName,
+          brand: e.brand,
+          notes: e.notes != null ? String(e.notes) : '',
+          imageUrl: e.imageUrl != null ? String(e.imageUrl) : null,
+        };
+      })
+      .sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
+    setItems(list);
+    setEditModal({ visible: false, barcode: null, productName: '', brand: '', notes: '', imageUrl: null, result: 'like' });
   };
 
   const renderItem = ({ item, index }) => {
@@ -176,7 +267,7 @@ export default function MyShelfScreen() {
       <AnimatedCard index={index}>
         <TouchableOpacity
           style={styles.cardWrap}
-          onPress={() => openEditNotes(item)}
+          onPress={() => openEditItem(item)}
           activeOpacity={0.9}
         >
           <BlurView intensity={55} tint="dark" style={styles.card}>
@@ -255,7 +346,36 @@ export default function MyShelfScreen() {
           <View style={styles.editModalBackdrop} />
           <View style={styles.editModalBoxWrap}>
             <BlurView intensity={75} tint="dark" style={styles.editModalBox}>
-              <Text style={styles.editModalTitle}>Редактировать заметку</Text>
+              <Text style={styles.editModalTitle}>Редактировать</Text>
+              <View style={styles.editImageRow}>
+                <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
+                  <ProductImage imageUrl={editModal.imageUrl} size={100} />
+                  <View style={styles.editBadge}>
+                    <Ionicons name="camera" size={14} color="#fff" />
+                  </View>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.editNameInput}
+                placeholder="Название товара"
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                value={editModal.productName}
+                onChangeText={(text) => setEditModal((m) => ({ ...m, productName: text }))}
+              />
+              <View style={styles.verdictRow}>
+                <TouchableOpacity
+                  style={[styles.verdictButton, editModal.result === 'like' && styles.verdictButtonLikeActive]}
+                  onPress={() => setEditModal((m) => ({ ...m, result: 'like' }))}
+                >
+                  <Text style={[styles.verdictButtonText, editModal.result === 'like' && styles.verdictButtonTextActive]}>Like</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.verdictButton, editModal.result === 'dislike' && styles.verdictButtonDislikeActive]}
+                  onPress={() => setEditModal((m) => ({ ...m, result: 'dislike' }))}
+                >
+                  <Text style={[styles.verdictButtonText, editModal.result === 'dislike' && styles.verdictButtonTextActive]}>Dislike</Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.editNotesInput}
                 placeholder="Заметки"
@@ -268,13 +388,13 @@ export default function MyShelfScreen() {
               <View style={styles.editModalButtons}>
                 <TouchableOpacity
                   style={[styles.editModalBtn, styles.editModalBtnCancel]}
-                  onPress={() => setEditModal({ visible: false, barcode: null, notes: '' })}
+                  onPress={() => setEditModal({ visible: false, barcode: null, productName: '', brand: '', notes: '', imageUrl: null, result: 'like' })}
                 >
                   <Text style={styles.editModalBtnText}>Отмена</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.editModalBtn, styles.editModalBtnSave]}
-                  onPress={saveEditNotes}
+                  onPress={handleUpdate}
                 >
                   <Text style={styles.editModalBtnText}>Сохранить</Text>
                 </TouchableOpacity>
@@ -443,6 +563,63 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 12,
+  },
+  editImageRow: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  editBadge: {
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
+    backgroundColor: '#2196F3',
+    borderRadius: 12,
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#1a1a1a',
+  },
+  editNameInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 14,
+    padding: 14,
+    color: '#fff',
+    fontSize: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  verdictRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  verdictButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  verdictButtonLikeActive: {
+    backgroundColor: 'rgba(76, 175, 80, 0.5)',
+    borderColor: '#4CAF50',
+  },
+  verdictButtonDislikeActive: {
+    backgroundColor: 'rgba(244, 67, 54, 0.5)',
+    borderColor: '#f44336',
+  },
+  verdictButtonText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  verdictButtonTextActive: {
+    color: '#fff',
   },
   editNotesInput: {
     backgroundColor: 'rgba(255,255,255,0.08)',
