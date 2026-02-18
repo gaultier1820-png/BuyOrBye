@@ -29,21 +29,22 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { loadBarcodeResults, saveBarcodeResult, removeBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
-const IMAGE_SIZE = 100;
+const IMAGE_SIZE = 120;
 
 function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
+  const height = size * (4 / 3); // 3:4 aspect ratio
   if (imageUrl) {
     return (
       <Image
         source={{ uri: imageUrl }}
-        style={[styles.productImage, { width: size, height: size }]}
+        style={[styles.productImage, { width: size, height }]}
         resizeMode="cover"
       />
     );
   }
   return (
-    <View style={[styles.placeholderImage, { width: size, height: size }]}>
-      <Ionicons name="cube-outline" size={size * 0.5} color="rgba(255,255,255,0.5)" />
+    <View style={[styles.placeholderImage, { width: size, height }]}>
+      <Ionicons name="cube-outline" size={size * 0.4} color="rgba(255,255,255,0.5)" />
     </View>
   );
 }
@@ -174,8 +175,8 @@ export default function ScannerScreen() {
               console.log('Launching camera...');
               const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: 'images',
-                allowsEditing: true,
-                aspect: [1, 1],
+                allowsEditing: false, // Skip cropping
+                // aspect: [3, 4], // Targeting 3:4 ratio
                 quality: 0.5,
               });
               console.log('Camera result:', result);
@@ -201,8 +202,8 @@ export default function ScannerScreen() {
               console.log('Launching gallery...');
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: 'images',
-                allowsEditing: true,
-                aspect: [1, 1],
+                allowsEditing: false, // Skip cropping
+                // aspect: [3, 4], // Targeting 3:4 ratio
                 quality: 0.5,
               });
               console.log('Gallery result:', result);
@@ -654,7 +655,8 @@ const styles = StyleSheet.create({
   },
   modalImageRow: {
     position: 'relative',
-    marginBottom: 12,
+    marginBottom: 20,
+    alignItems: 'center',
   },
   loaderWrap: {
     position: 'absolute',
@@ -664,16 +666,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   productImage: {
-    borderRadius: 14,
+    borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.3)',
+    width: 120,
+    height: 160,
   },
   placeholderImage: {
-    borderRadius: 14,
+    borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    width: 120,
+    height: 160,
   },
   nameInput: {
     backgroundColor: 'rgba(255,255,255,0.08)',
