@@ -18,6 +18,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { loadBarcodeResults, saveBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
@@ -48,7 +49,8 @@ export default function ScannerScreen() {
   const [barcodeResult, setBarcodeResult] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [savedResults, setSavedResults] = useState({});
-  const [productInfo, setProductInfo] = useState({ name: '', image: null });
+  const [editableName, setEditableName] = useState('');
+  const [selectedImage, setSelectedImage] = useState(null);
   const [productLoading, setProductLoading] = useState(false);
   const [modalNotes, setModalNotes] = useState('');
   const modalOpacity = useRef(new Animated.Value(1)).current;
@@ -109,7 +111,8 @@ export default function ScannerScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     setProductLoading(true);
-    setProductInfo({ name: '', image: null });
+    setEditableName('');
+    setSelectedImage(null);
     setModalNotes('');
     setShowModal(true);
     modalOpacity.setValue(1);
@@ -128,10 +131,12 @@ export default function ScannerScreen() {
       const product = json.product;
       const name = product?.product_name || product?.product_name_en || `Product ${barcode}`;
       const image = product?.image_front_url || product?.image_url || null;
-      setProductInfo({ name, image });
+      setEditableName(name);
+      setSelectedImage(image);
     } catch (error) {
       if (currentBarcodeRef.current !== barcode) return;
-      setProductInfo({ name: `Product ${barcode}`, image: null });
+      setEditableName(`Product ${barcode}`);
+      setSelectedImage(null);
     } finally {
       if (currentBarcodeRef.current === barcode) {
         setProductLoading(false);
@@ -139,12 +144,56 @@ export default function ScannerScreen() {
     }
   };
 
+  const pickImage = async () => {
+    Alert.alert('Фото товара', 'Выберите источник', [
+      {
+        text: 'Камера',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Ошибка', 'Нужен доступ к камере');
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaType.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.5,
+          });
+          if (!result.canceled) {
+            setSelectedImage(result.assets[0].uri);
+          }
+        },
+      },
+      {
+        text: 'Галерея',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Ошибка', 'Нужен доступ к галерее');
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaType.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.5,
+          });
+          if (!result.canceled) {
+            setSelectedImage(result.assets[0].uri);
+          }
+        },
+      },
+      { text: 'Отмена', style: 'cancel' },
+    ]);
+  };
+
   const saveResult = async (result) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const newResults = await saveBarcodeResult(currentBarcode, result, savedResults, {
-        productName: productInfo.name || undefined,
-        imageUrl: productInfo.image || undefined,
+        productName: editableName.trim() || undefined,
+        imageUrl: selectedImage || undefined,
         notes: modalNotes.trim(),
       });
       setSavedResults(newResults);
@@ -159,7 +208,8 @@ export default function ScannerScreen() {
         setCurrentBarcode(null);
         currentBarcodeRef.current = null;
         setModalNotes('');
-        setProductInfo({ name: '', image: null });
+        setEditableName('');
+        setSelectedImage(null);
         modalOpacity.setValue(1);
       });
     } catch (error) {
@@ -179,14 +229,11 @@ export default function ScannerScreen() {
       setCurrentBarcode(null);
       currentBarcodeRef.current = null;
       setModalNotes('');
-      setProductInfo({ name: '', image: null });
+      setEditableName('');
+      setSelectedImage(null);
       modalOpacity.setValue(1);
     });
   };
-
-  const modalDisplayName = productLoading
-    ? 'Searching for product name...'
-    : productInfo.name || currentBarcode;
 
   if (!permission) {
     return (
@@ -258,16 +305,26 @@ export default function ScannerScreen() {
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
-                <ProductImage imageUrl={productInfo.image} size={IMAGE_SIZE} />
+                <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
+                  <ProductImage imageUrl={selectedImage} size={IMAGE_SIZE} />
+                  <View style={styles.editBadge}>
+                    <Ionicons name="camera" size={14} color="#fff" />
+                  </View>
+                </TouchableOpacity>
                 {productLoading && (
                   <View style={styles.loaderWrap}>
                     <ActivityIndicator size="small" color="#4CAF50" />
                   </View>
                 )}
               </View>
-              <Text style={styles.modalProductName} numberOfLines={3}>
-                {modalDisplayName}
-              </Text>
+              <TextInput
+                style={styles.nameInput}
+                value={editableName}
+                onChangeText={setEditableName}
+                placeholder="Название товара"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                multiline
+              />
               {currentBarcode ? (
                 <Text style={styles.modalBarcodeSmall}>Штрихкод: {currentBarcode}</Text>
               ) : null}
@@ -436,13 +493,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  modalProductName: {
+  nameInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 12,
     color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
-    marginBottom: 6,
+    width: '100%',
+    marginBottom: 8,
     textAlign: 'center',
-    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  editBadge: {
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
+    backgroundColor: '#2196F3',
+    borderRadius: 12,
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#1a1a1a',
   },
   modalBarcodeSmall: {
     color: 'rgba(255,255,255,0.6)',
