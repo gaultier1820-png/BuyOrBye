@@ -12,12 +12,14 @@ import {
   Platform,
   Animated,
   Image,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import {
   loadBarcodeResults,
@@ -27,21 +29,21 @@ import {
   saveBarcodeResult,
 } from '../storage';
 
-const CARD_IMAGE_SIZE = 72;
+const { width } = Dimensions.get('window');
 
-function ProductImage({ imageUrl, size = CARD_IMAGE_SIZE }) {
+function ProductImage({ imageUrl, style, iconSize = 32 }) {
   if (imageUrl) {
     return (
       <Image
         source={{ uri: imageUrl }}
-        style={[styles.cardImage, { width: size, height: size }]}
+        style={style}
         resizeMode="cover"
       />
     );
   }
   return (
-    <View style={[styles.placeholderImage, { width: size, height: size }]}>
-      <Ionicons name="cube-outline" size={size * 0.5} color="rgba(255,255,255,0.4)" />
+    <View style={[style, styles.placeholderCenter]}>
+      <Ionicons name="cube-outline" size={iconSize} color="rgba(255,255,255,0.4)" />
     </View>
   );
 }
@@ -142,6 +144,7 @@ export default function MyShelfScreen() {
     const next = await removeBarcodeResult(barcode, rawResults);
     setRawResults(next);
     setItems((prev) => prev.filter((i) => i.barcode !== barcode));
+    setEditModal((m) => ({ ...m, visible: false }));
   };
 
   const handleClearAll = () => {
@@ -265,53 +268,64 @@ export default function MyShelfScreen() {
 
   const renderItem = ({ item, index }) => {
     const displayName = getDisplayName(item) || item.barcode;
-    
-    const renderRightActions = (progress, dragX) => {
+
+    const renderLeftActions = (progress, dragX) => {
       const scale = dragX.interpolate({
-        inputRange: [-80, 0],
-        outputRange: [1, 0],
+        inputRange: [0, 100],
+        outputRange: [0, 1],
         extrapolate: 'clamp',
       });
       return (
-        <TouchableOpacity
-          style={styles.deleteAction}
-          onPress={() => handleDelete(item.barcode)}
-        >
+        <View style={styles.swipeLeftAction}>
           <Animated.View style={{ transform: [{ scale }] }}>
-            <Ionicons name="trash-outline" size={26} color="#fff" />
+            <Ionicons name="trash-outline" size={28} color="#fff" />
           </Animated.View>
-        </TouchableOpacity>
+        </View>
       );
     };
 
     return (
       <AnimatedCard index={index}>
-        <Swipeable renderRightActions={renderRightActions} containerStyle={styles.swipeContainer}>
+        <Swipeable
+          renderLeftActions={renderLeftActions}
+          onSwipeableOpen={() => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            Alert.alert(
+              'Удалить?',
+              'Удалить этот товар из истории?',
+              [
+                { text: 'Отмена', style: 'cancel', onPress: () => refresh() },
+                { text: 'Удалить', style: 'destructive', onPress: () => handleDelete(item.barcode) }
+              ]
+            );
+          }}
+        >
           <TouchableOpacity
-            style={styles.cardContainer}
+            style={styles.listCard}
             onPress={() => openEditItem(item)}
             activeOpacity={0.9}
           >
-            <View style={[styles.verdictIndicator, item.result === 'like' ? styles.indicatorLike : styles.indicatorDislike]} />
+            <ProductImage 
+              imageUrl={item.imageUrl} 
+              style={styles.listImage} 
+              iconSize={32}
+            />
             
-            <View style={styles.cardInner}>
-              <ProductImage imageUrl={item.imageUrl} size={CARD_IMAGE_SIZE} />
-              <View style={styles.cardContent}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.productName} numberOfLines={1}>{displayName}</Text>
-                  <Text style={styles.date}>{formatDate(item.scannedAt).split(',')[0]}</Text>
+            <View style={styles.listContent}>
+              <View style={styles.listHeader}>
+                <Text style={styles.listTitle} numberOfLines={2}>{displayName}</Text>
+                <View style={[styles.listBadge, item.result === 'like' ? styles.badgeLike : styles.badgeDislike]}>
+                  <Ionicons 
+                    name={item.result === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                    size={12} 
+                    color="#fff" 
+                  />
                 </View>
-                
-                {item.category && (
-                  <View style={styles.categoryTag}>
-                    <Text style={styles.categoryText}>{item.category}</Text>
-                  </View>
-                )}
-
-                <Text style={styles.notes} numberOfLines={2}>
-                  {item.notes ? item.notes : <Text style={styles.notesPlaceholder}>Нет заметок...</Text>}
-                </Text>
               </View>
+              
+              <Text style={styles.listDate}>
+                {formatDate(item.scannedAt).split(',')[0]}
+              </Text>
             </View>
           </TouchableOpacity>
         </Swipeable>
@@ -374,8 +388,7 @@ export default function MyShelfScreen() {
           data={filteredItems}
           keyExtractor={(item) => item.barcode}
           renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          contentContainerStyle={{ paddingBottom: 100, paddingTop: 15 }}
         />
       )}
 
@@ -396,7 +409,11 @@ export default function MyShelfScreen() {
               <Text style={styles.editModalTitle}>Редактировать</Text>
               <View style={styles.editImageRow}>
                 <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
-                  <ProductImage imageUrl={editModal.imageUrl} size={100} />
+                  <ProductImage 
+                    imageUrl={editModal.imageUrl} 
+                    style={styles.editModalImage} 
+                    iconSize={40}
+                  />
                   <View style={styles.editBadge}>
                     <Ionicons name="camera" size={14} color="#fff" />
                   </View>
@@ -433,6 +450,12 @@ export default function MyShelfScreen() {
                 maxLength={300}
               />
               <View style={styles.editModalButtons}>
+                <TouchableOpacity
+                  style={[styles.editModalBtn, styles.editModalBtnDelete]}
+                  onPress={() => handleDelete(editModal.barcode)}
+                >
+                  <Ionicons name="trash-outline" size={20} color="#ff4444" />
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.editModalBtn, styles.editModalBtnCancel]}
                   onPress={() => setEditModal({ visible: false, barcode: null, productName: '', brand: '', notes: '', imageUrl: null, result: 'like' })}
@@ -535,102 +558,65 @@ const styles = StyleSheet.create({
   filterBtnTextActive: {
     color: '#fff',
   },
-  listContent: {
-    padding: 16,
-    paddingBottom: 32,
-    paddingTop: 8,
-  },
-  swipeContainer: {
-    marginBottom: 0,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  cardContainer: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 16,
+  // List Styles
+  listCard: {
     flexDirection: 'row',
+    height: 120,
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    marginHorizontal: 15,
+    marginBottom: 12,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
-  verdictIndicator: {
-    width: 6,
+  listImage: {
+    width: 90,
     height: '100%',
-  },
-  indicatorLike: { backgroundColor: '#4CAF50' },
-  indicatorDislike: { backgroundColor: '#F44336' },
-  cardInner: {
-    flex: 1,
-    flexDirection: 'row',
-    padding: 12,
-    alignItems: 'center',
-  },
-  cardImage: {
-    borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.2)',
-    marginRight: 12,
   },
-  placeholderImage: {
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  listContent: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'space-between',
   },
-  cardContent: { flex: 1, justifyContent: 'center' },
-  cardHeader: {
+  listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+    alignItems: 'flex-start',
   },
-  productName: {
+  listTitle: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
     flex: 1,
     marginRight: 8,
   },
-  date: {
+  listBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  listDate: {
     color: 'rgba(255,255,255,0.4)',
     fontSize: 12,
   },
-  categoryTag: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginBottom: 6,
-  },
-  categoryText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  notes: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  notesPlaceholder: {
-    color: 'rgba(255,255,255,0.4)',
-    fontStyle: 'italic',
-  },
-  deleteAction: {
-    backgroundColor: '#D32F2F',
+  placeholderCenter: {
     justifyContent: 'center',
     alignItems: 'center',
-    width: 80,
-    height: '100%',
-    borderTopRightRadius: 16,
-    borderBottomRightRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  separator: {
-    height: 12,
+  badgeLike: { backgroundColor: '#4CAF50' },
+  badgeDislike: { backgroundColor: '#F44336' },
+  swipeLeftAction: {
+    backgroundColor: '#D32F2F',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingLeft: 30,
+    flex: 1,
+    marginHorizontal: 15,
+    marginBottom: 12,
+    borderRadius: 12,
   },
   empty: {
     flex: 1,
@@ -678,6 +664,11 @@ const styles = StyleSheet.create({
   editImageRow: {
     alignItems: 'center',
     marginBottom: 16,
+  },
+  editModalImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 12,
   },
   editBadge: {
     position: 'absolute',
@@ -756,6 +747,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
   },
   editModalBtnCancel: { backgroundColor: 'rgba(255,255,255,0.1)' },
   editModalBtnSave: { backgroundColor: 'rgba(76, 175, 80, 0.9)' },
@@ -763,5 +755,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  editModalBtnDelete: {
+    backgroundColor: 'rgba(244, 67, 54, 0.15)',
+    borderColor: 'rgba(244, 67, 54, 0.3)',
   },
 });
