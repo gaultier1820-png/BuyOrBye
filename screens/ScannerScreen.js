@@ -9,6 +9,7 @@ import {
   TextInput,
   ActivityIndicator,
   Image,
+  BackHandler,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
@@ -26,7 +27,7 @@ import Animated, {
   interpolate,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { loadBarcodeResults, saveBarcodeResult, removeBarcodeResult } from '../storage';
+import { loadBarcodeResults, saveBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
 const IMAGE_SIZE = 120;
@@ -64,11 +65,11 @@ export default function ScannerScreen() {
   const [productLoading, setProductLoading] = useState(false);
   const [modalNotes, setModalNotes] = useState('');
   const [existingVerdict, setExistingVerdict] = useState(null);
-  const [lastAction, setLastAction] = useState(null);
   const [lastScannedDate, setLastScannedDate] = useState(null);
 
   // Reanimated Shared Values
   const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
   const hapticTriggered = useSharedValue(false);
   const entranceTranslateY = useSharedValue(500);
 
@@ -80,10 +81,29 @@ export default function ScannerScreen() {
 
   useEffect(() => {
     if (showModal) {
+      translateY.value = 0;
       entranceTranslateY.value = withSpring(0, { damping: 12, stiffness: 100 });
     } else {
       entranceTranslateY.value = 500;
+      translateY.value = 0;
     }
+  }, [showModal]);
+
+  useEffect(() => {
+    if (!showModal) return;
+
+    const backAction = () => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      closeModal();
+      return true;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction
+    );
+
+    return () => backHandler.remove();
   }, [showModal]);
 
   const loadSavedResults = async () => {
@@ -254,9 +274,9 @@ export default function ScannerScreen() {
   };
 
   const pan = Gesture.Pan()
-    .activeOffsetX([-20, 20])
     .onUpdate((event) => {
       translateX.value = event.translationX;
+      translateY.value = event.translationY;
       if (Math.abs(event.translationX) > 100 && !hapticTriggered.value) {
         hapticTriggered.value = true;
         runOnJS(Haptics.selectionAsync)();
@@ -264,7 +284,7 @@ export default function ScannerScreen() {
         hapticTriggered.value = false;
       }
     })
-    .onEnd(() => {
+    .onEnd((event) => {
       hapticTriggered.value = false;
       if (Math.abs(translateX.value) > 100) {
         const direction = translateX.value > 0 ? 'like' : 'dislike';
@@ -272,8 +292,16 @@ export default function ScannerScreen() {
         translateX.value = withSpring(targetX, { velocity: 50 }, () => {
           runOnJS(handleSwipeComplete)(direction);
         });
+        translateY.value = withSpring(0);
+      } else if (event.translationY > 150) {
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
+        translateY.value = withSpring(height, { velocity: event.velocityY }, () => {
+          runOnJS(closeModal)();
+        });
+        translateX.value = withSpring(0);
       } else {
         translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
       }
     });
 
@@ -282,7 +310,7 @@ export default function ScannerScreen() {
     return {
       transform: [
         { translateX: translateX.value },
-        { translateY: entranceTranslateY.value },
+        { translateY: entranceTranslateY.value + translateY.value },
         { rotate: `${rotate}deg` }
       ],
     };
@@ -297,16 +325,6 @@ export default function ScannerScreen() {
   }));
 
   const saveResult = async (result) => {
-    // Save state for Undo
-    setLastAction({
-      barcode: currentBarcode,
-      productName: editableName,
-      imageUrl: selectedImage,
-      notes: modalNotes,
-      existingVerdict: existingVerdict,
-      lastScannedDate: lastScannedDate,
-    });
-
     try {
       const newResults = await saveBarcodeResult(currentBarcode, result, savedResults, {
         productName: editableName.trim() || undefined,
@@ -326,34 +344,10 @@ export default function ScannerScreen() {
       setExistingVerdict(null);
       setLastScannedDate(null);
       translateX.value = 0;
+      translateY.value = 0;
     } catch (error) {
       console.error('Error saving result:', error);
       Alert.alert('Ошибка', 'Не удалось сохранить результат');
-    }
-  };
-
-  const handleUndo = async () => {
-    if (!lastAction) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    try {
-      const newResults = await removeBarcodeResult(lastAction.barcode, savedResults);
-      setSavedResults(newResults);
-      
-      setScanned(true);
-      setCurrentBarcode(lastAction.barcode);
-      currentBarcodeRef.current = lastAction.barcode;
-      setEditableName(lastAction.productName);
-      setSelectedImage(lastAction.imageUrl);
-      setModalNotes(lastAction.notes);
-      setExistingVerdict(lastAction.existingVerdict);
-      setLastScannedDate(lastAction.lastScannedDate);
-      
-      setLastAction(null);
-      setShowModal(true);
-      translateX.value = 0;
-    } catch (error) {
-      console.error('Undo error:', error);
     }
   };
 
@@ -369,6 +363,7 @@ export default function ScannerScreen() {
     setExistingVerdict(null);
     setLastScannedDate(null);
     translateX.value = 0;
+    translateY.value = 0;
   };
 
   if (!permission) {
@@ -433,12 +428,6 @@ export default function ScannerScreen() {
         </View>
       )}
 
-      {!showModal && lastAction && (
-        <TouchableOpacity style={styles.undoButton} onPress={handleUndo}>
-          <Ionicons name="arrow-undo" size={24} color="#fff" />
-        </TouchableOpacity>
-      )}
-
       {showModal && (
         <View style={styles.modalOverlay}>
           {/* Iridescent Side Gradients */}
@@ -466,6 +455,14 @@ export default function ScannerScreen() {
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
+              <View style={{
+                width: 40,
+                height: 5,
+                borderRadius: 3,
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                marginTop: 10,
+                alignSelf: 'center'
+              }} />
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
                 <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
@@ -530,13 +527,6 @@ export default function ScannerScreen() {
                 </TouchableOpacity>
               </View>
             </BlurView>
-            <GHTouchableOpacity
-              style={styles.closeButton}
-              onPress={closeModal}
-              hitSlop={{ top: 30, bottom: 30, left: 30, right: 30 }}
-            >
-              <Ionicons name="close" size={20} color="#000" />
-            </GHTouchableOpacity>
           </Animated.View>
           </GestureDetector>
         </View>
@@ -634,6 +624,7 @@ const styles = StyleSheet.create({
   },
   modalContentWrap: {
     width: width * 0.9,
+    alignSelf: 'center',
     borderRadius: 24,
     overflow: 'visible',
     borderWidth: 2,
@@ -778,34 +769,6 @@ const styles = StyleSheet.create({
   dateText: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 12,
-  },
-  closeButton: {
-    position: 'absolute',
-    top: -10,
-    right: -10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'white',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 9999,
-    elevation: 10,
-    borderWidth: 2,
-    borderColor: '#000',
-  },
-  undoButton: {
-    position: 'absolute',
-    bottom: 60,
-    left: 40,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
   },
   actionButtonsContainer: {
     flexDirection: 'row',
