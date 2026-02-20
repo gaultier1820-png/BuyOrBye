@@ -1,62 +1,65 @@
-// 1. ЭТО ДОЛЖНО БЫТЬ САМОЙ ПЕРВОЙ СТРОКОЙ! БЕЗ НЕЕ ВСЁ УПАДЕТ.
-import 'react-native-gesture-handler'; 
-
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { StatusBar } from 'expo-status-bar';
-
-// 2. Добавляем специальную обертку для жестов
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BlurView } from 'expo-blur';
 
 import ScannerScreen from './screens/ScannerScreen';
 import MyShelfScreen from './screens/MyShelfScreen';
 
 const Tab = createBottomTabNavigator();
 
+const TransparentTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: 'transparent',
+  },
+};
+
 export default function App() {
   return (
-    // 3. Оборачиваем всё приложение в этот компонент
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <NavigationContainer>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <NavigationContainer theme={TransparentTheme}>
           <StatusBar style="light" />
           <Tab.Navigator
-            screenOptions={{
+            screenOptions={({ route }) => ({
               headerShown: false,
               tabBarStyle: {
-                backgroundColor: '#1a1a1a',
-                borderTopColor: '#333',
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                backgroundColor: 'transparent',
+                borderTopWidth: 0,
+                elevation: 0,
               },
-              tabBarActiveTintColor: '#4CAF50',
-              tabBarInactiveTintColor: '#888',
-            }}
+              tabBarBackground: () => null,
+              tabBarActiveTintColor: '#4ade80',
+              tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
+              tabBarShowLabel: false,
+              tabBarIcon: ({ focused, color, size }) => {
+                let iconName;
+                if (route.name === 'Scanner') {
+                  iconName = focused ? 'scan-circle' : 'scan-outline';
+                  size = focused ? size + 4 : size;
+                } else if (route.name === 'MyShelf') {
+                  iconName = focused ? 'library' : 'library-outline';
+                }
+                return <Ionicons name={iconName} size={size} color={color} />;
+              },
+            })}
           >
-            <Tab.Screen
-              name="Scanner"
-              component={ScannerScreen}
-              options={{
-                title: 'Сканер',
-                tabBarIcon: ({ color, size }) => (
-                  <Ionicons name="camera" size={size} color={color} />
-                ),
-              }}
-            />
-            <Tab.Screen
-              name="MyShelf"
-              component={MyShelfScreen}
-              options={{
-                title: 'Моя Полка',
-                tabBarIcon: ({ color, size }) => (
-                  <Ionicons name="list" size={size} color={color} />
-                ),
-              }}
-            />
+            <Tab.Screen name="Scanner" component={ScannerScreen} />
+            <Tab.Screen name="MyShelf" component={MyShelfScreen} />
           </Tab.Navigator>
         </NavigationContainer>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }

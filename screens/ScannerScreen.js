@@ -10,21 +10,28 @@ import {
   ActivityIndicator,
   Image,
   BackHandler,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Gesture, GestureDetector, GestureHandlerRootView, TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Gesture, GestureDetector, TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
   runOnJS,
   interpolate,
+  withTiming,
+  withDelay,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadBarcodeResults, saveBarcodeResult } from '../storage';
@@ -33,18 +40,17 @@ const { width, height } = Dimensions.get('window');
 const IMAGE_SIZE = 120;
 
 function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
-  const height = size * (4 / 3); // 3:4 aspect ratio
   if (imageUrl) {
     return (
       <Image
         source={{ uri: imageUrl }}
-        style={[styles.productImage, { width: size, height }]}
+        style={[styles.productImage, { width: size, aspectRatio: 3 / 4 }]}
         resizeMode="cover"
       />
     );
   }
   return (
-    <View style={[styles.placeholderImage, { width: size, height }]}>
+    <View style={[styles.placeholderImage, { width: size, aspectRatio: 3 / 4 }]}>
       <Ionicons name="cube-outline" size={size * 0.4} color="rgba(255,255,255,0.5)" />
     </View>
   );
@@ -57,6 +63,9 @@ export default function ScannerScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentBarcode, setCurrentBarcode] = useState(null);
   const currentBarcodeRef = useRef(null);
+  const cameraRef = useRef(null);
+  const fullCameraRef = useRef(null);
+  const [showFullCamera, setShowFullCamera] = useState(false);
   const [barcodeResult, setBarcodeResult] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [savedResults, setSavedResults] = useState({});
@@ -66,12 +75,18 @@ export default function ScannerScreen() {
   const [modalNotes, setModalNotes] = useState('');
   const [existingVerdict, setExistingVerdict] = useState(null);
   const [lastScannedDate, setLastScannedDate] = useState(null);
+  const [isFlashing, setIsFlashing] = useState(false);
+  const [focusPoint, setFocusPoint] = useState(null);
+  const insets = useSafeAreaInsets();
 
   // Reanimated Shared Values
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const hapticTriggered = useSharedValue(false);
   const entranceTranslateY = useSharedValue(500);
+  const focusOpacity = useSharedValue(0);
+  const focusX = useSharedValue(0);
+  const focusY = useSharedValue(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -179,35 +194,31 @@ export default function ScannerScreen() {
     }
   };
 
+  const takePhoto = async () => {
+    if (fullCameraRef.current) {
+      try {
+        const photo = await fullCameraRef.current.takePictureAsync({
+          quality: 0.8,
+        });
+        if (photo.uri) {
+          const permanentUri = FileSystem.documentDirectory + Date.now() + '.jpg';
+          await FileSystem.copyAsync({ from: photo.uri, to: permanentUri });
+          setSelectedImage(permanentUri);
+          setShowFullCamera(false);
+        }
+      } catch (error) {
+        console.log('Error taking photo:', error);
+        Alert.alert('Ошибка', 'Не удалось сделать фото');
+      }
+    }
+  };
+
   const pickImage = async () => {
     try {
       Alert.alert('Фото товара', 'Выберите источник', [
         {
           text: 'Камера',
-          onPress: async () => {
-            try {
-              console.log('Requesting camera permissions...');
-              const { status } = await ImagePicker.requestCameraPermissionsAsync();
-              if (status !== 'granted') {
-                Alert.alert('Ошибка', 'Нужен доступ к камере');
-                return;
-              }
-              console.log('Launching camera...');
-              const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: 'images',
-                allowsEditing: false, // Skip cropping
-                // aspect: [3, 4], // Targeting 3:4 ratio
-                quality: 0.5,
-              });
-              console.log('Camera result:', result);
-              if (!result.canceled && result.assets && result.assets.length > 0) {
-                setSelectedImage(result.assets[0].uri);
-              }
-            } catch (error) {
-              console.log('Camera error:', error);
-              Alert.alert('Ошибка', 'Не удалось сделать фото');
-            }
-          },
+          onPress: () => setShowFullCamera(true),
         },
         {
           text: 'Галерея',
@@ -222,13 +233,15 @@ export default function ScannerScreen() {
               console.log('Launching gallery...');
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: 'images',
-                allowsEditing: false, // Skip cropping
-                // aspect: [3, 4], // Targeting 3:4 ratio
+                allowsEditing: false,
                 quality: 0.5,
               });
               console.log('Gallery result:', result);
               if (!result.canceled && result.assets && result.assets.length > 0) {
-                setSelectedImage(result.assets[0].uri);
+                const fileName = Date.now() + '.jpg';
+                const permanentUri = FileSystem.documentDirectory + fileName;
+                await FileSystem.copyAsync({ from: result.assets[0].uri, to: permanentUri });
+                setSelectedImage(permanentUri);
               }
             } catch (error) {
               console.log('Gallery error:', error);
@@ -305,6 +318,20 @@ export default function ScannerScreen() {
       }
     });
 
+  const tapGesture = Gesture.Tap().onEnd((event) => {
+    const { x, y } = event;
+    runOnJS(setFocusPoint)({ x: x / width, y: y / height });
+    focusX.value = x - 30;
+    focusY.value = y - 30;
+    focusOpacity.value = 1;
+    focusOpacity.value = withDelay(500, withTiming(0, { duration: 300 }));
+  });
+
+  const rFocusStyle = useAnimatedStyle(() => ({
+    opacity: focusOpacity.value,
+    transform: [{ translateX: focusX.value }, { translateY: focusY.value }],
+  }));
+
   const rCardStyle = useAnimatedStyle(() => {
     const rotate = interpolate(translateX.value, [-width, width], [-15, 15]);
     return {
@@ -353,6 +380,7 @@ export default function ScannerScreen() {
 
   const closeModal = () => {
     Haptics.selectionAsync();
+    setShowFullCamera(false);
     setShowModal(false);
     setScanned(false);
     setCurrentBarcode(null);
@@ -388,15 +416,29 @@ export default function ScannerScreen() {
   }
 
   return (
-    <GestureHandlerRootView style={styles.container}>
-      <CameraView
-        style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
-        facing="back"
-        onBarcodeScanned={handleBarCodeScanned}
-        barcodeScannerSettings={{
-          barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
-        }}
-      />
+    <View style={styles.container}>
+      <GestureDetector gesture={tapGesture}>
+        <View style={StyleSheet.absoluteFill}>
+          <CameraView
+            ref={cameraRef}
+            style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
+            facing="back"
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr', 'ean13', 'ean8'],
+            }}
+            focusPoint={focusPoint}
+          />
+          <Animated.View style={[styles.focusFrame, rFocusStyle]} />
+        </View>
+      </GestureDetector>
+      {isFlashing && (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'white', opacity: 0.5, zIndex: 2000 }]}
+          pointerEvents="none"
+        />
+      )}
+
       {barcodeResult && currentBarcode && (
         <View style={styles.resultOverlay}>
           <BlurView intensity={60} tint="dark" style={styles.glassCard}>
@@ -414,17 +456,19 @@ export default function ScannerScreen() {
 
       {!showModal && (
         <View style={styles.scanButtonContainer}>
-          <TouchableOpacity
-            style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
-            onPress={() => {
-              setScanned(false);
-              setBarcodeResult(null);
-              setCurrentBarcode(null);
-              setIsReadyToScan(true);
-            }}
-          >
-            <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
-          </TouchableOpacity>
+          <BlurView intensity={80} tint="dark" style={styles.scanBlur}>
+            <TouchableOpacity
+              style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
+              onPress={() => {
+                setScanned(false);
+                setBarcodeResult(null);
+                setCurrentBarcode(null);
+                setIsReadyToScan(true);
+              }}
+            >
+              <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
+            </TouchableOpacity>
+          </BlurView>
         </View>
       )}
 
@@ -455,6 +499,15 @@ export default function ScannerScreen() {
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
             <BlurView intensity={70} tint="dark" style={styles.modalContent}>
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ width: '100%' }}
+              >
+                <ScrollView
+                  contentContainerStyle={{ alignItems: 'center' }}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
               <View style={{
                 width: 40,
                 height: 5,
@@ -465,7 +518,7 @@ export default function ScannerScreen() {
               }} />
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
-                <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
+                <TouchableOpacity onPress={() => setShowFullCamera(true)} activeOpacity={0.8}>
                   <ProductImage imageUrl={selectedImage} size={IMAGE_SIZE} />
                   <View style={styles.editBadge}>
                     <Ionicons name="camera" size={14} color="#fff" />
@@ -526,13 +579,31 @@ export default function ScannerScreen() {
                   <MaterialCommunityIcons name="thumb-up-outline" size={30} color="grey" />
                 </TouchableOpacity>
               </View>
+                </ScrollView>
+              </KeyboardAvoidingView>
             </BlurView>
           </Animated.View>
           </GestureDetector>
         </View>
       )}
+
+      {showFullCamera && (
+        <View style={styles.fullCameraOverlay}>
+          <View style={styles.fullCameraContainer}>
+            <CameraView
+              ref={fullCameraRef}
+              style={StyleSheet.absoluteFill}
+              facing="back"
+            />
+          </View>
+          <TouchableOpacity style={styles.captureBtn} onPress={takePhoto} />
+          <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setShowFullCamera(false)}>
+            <Text style={styles.cancelCameraText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <StatusBar style="light" />
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -660,7 +731,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.3)',
     width: 120,
-    height: 160,
+    aspectRatio: 3 / 4,
   },
   placeholderImage: {
     borderRadius: 12,
@@ -670,7 +741,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
     width: 120,
-    height: 160,
+    aspectRatio: 3 / 4,
   },
   nameInput: {
     backgroundColor: 'rgba(255,255,255,0.08)',
@@ -729,20 +800,23 @@ const styles = StyleSheet.create({
   },
   scanButtonContainer: {
     position: 'absolute',
-    bottom: 50,
+    bottom: 0,
     left: 0,
     right: 0,
     alignItems: 'center',
+    paddingBottom: 110,
+  },
+  scanBlur: {
+    borderRadius: 30,
+    overflow: 'hidden',
   },
   scanButton: {
-    backgroundColor: '#2196F3',
+    backgroundColor: 'rgba(74, 222, 128, 0.4)',
     paddingVertical: 20,
     paddingHorizontal: 60,
-    borderRadius: 30,
-    elevation: 5,
   },
   scanButtonActive: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: 'rgba(74, 222, 128, 0.8)',
   },
   scanButtonText: {
     color: '#fff',
@@ -786,5 +860,72 @@ const styles = StyleSheet.create({
     borderColor: 'grey',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  focusFrame: {
+    position: 'absolute',
+    width: 60,
+    height: 60,
+    borderWidth: 2,
+    borderColor: '#4ade80',
+    borderRadius: 8,
+    top: 0,
+    left: 0,
+  },
+  modalCameraContainer: {
+    width: 120,
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  modalCamera: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  shutterButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    borderWidth: 4,
+    borderColor: 'rgba(0,0,0,0.2)',
+    marginBottom: 10,
+    zIndex: 10,
+  },
+  fullCameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    zIndex: 3000,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullCameraContainer: {
+    width: width,
+    height: width * (4 / 3),
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  captureBtn: {
+    position: 'absolute',
+    bottom: 40,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#fff',
+    borderWidth: 4,
+    borderColor: 'rgba(0,0,0,0.2)',
+  },
+  cancelCameraBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    padding: 10,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 20,
+  },
+  cancelCameraText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });

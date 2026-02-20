@@ -17,24 +17,34 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#121212"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.nata7337.BuyOrBye"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-barcode-scanner",
       [
         "expo-camera",
         {
           "cameraPermission": "Разрешите доступ к камере для сканирования штрихкодов"
         }
-      ]
-    ]
-    ,
-    "primaryColor": "#4CAF50"
+      ],
+      "expo-asset",
+      "expo-sharing"
+    ],
+    "primaryColor": "#4CAF50",
+    "extra": {
+      "eas": {
+        "projectId": "e79e4ad6-2181-45c2-b241-4a2cbd6b3286"
+      }
+    }
   }
 }

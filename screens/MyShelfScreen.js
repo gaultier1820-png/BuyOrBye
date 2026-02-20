@@ -14,14 +14,16 @@ import {
   Image,
   Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
-import {
+import * as FileSystem from 'expo-file-system/legacy';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { 
   loadBarcodeResults,
   removeBarcodeResult,
   clearAllBarcodeResults,
@@ -32,12 +34,19 @@ import {
 const { width } = Dimensions.get('window');
 
 function ProductImage({ imageUrl, style, iconSize = 32 }) {
-  if (imageUrl) {
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [imageUrl]);
+
+  if (imageUrl && !imageError) {
     return (
       <Image
         source={{ uri: imageUrl }}
         style={style}
         resizeMode="cover"
+        onError={() => setImageError(true)}
       />
     );
   }
@@ -101,6 +110,10 @@ export default function MyShelfScreen() {
     imageUrl: null,
     result: 'like',
   });
+  const [showFullCamera, setShowFullCamera] = useState(false);
+  const cameraRef = useRef(null);
+  const [isFlashing, setIsFlashing] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const refresh = useCallback(async () => {
     const data = await loadBarcodeResults();
@@ -183,27 +196,7 @@ export default function MyShelfScreen() {
       Alert.alert('Фото товара', 'Выберите источник', [
         {
           text: 'Камера',
-          onPress: async () => {
-            try {
-              const { status } = await ImagePicker.requestCameraPermissionsAsync();
-              if (status !== 'granted') {
-                Alert.alert('Ошибка', 'Нужен доступ к камере');
-                return;
-              }
-              const result = await ImagePicker.launchCameraAsync({
-                mediaTypes: 'images',
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 0.5,
-              });
-              if (!result.canceled && result.assets && result.assets.length > 0) {
-                setEditModal((m) => ({ ...m, imageUrl: result.assets[0].uri }));
-              }
-            } catch (error) {
-              console.log('Camera error:', error);
-              Alert.alert('Ошибка', 'Не удалось сделать фото');
-            }
-          },
+          onPress: () => setShowFullCamera(true),
         },
         {
           text: 'Галерея',
@@ -233,6 +226,30 @@ export default function MyShelfScreen() {
       ]);
     } catch (e) {
       console.log('PickImage error:', e);
+    }
+  };
+
+  const takePhoto = async () => {
+    if (cameraRef.current) {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setIsFlashing(true);
+        setTimeout(() => setIsFlashing(false), 100);
+
+        const photo = await cameraRef.current.takePictureAsync({
+          quality: 0.8,
+        });
+        if (photo.uri) {
+          const fileName = Date.now() + '.jpg';
+          const permanentUri = FileSystem.documentDirectory + fileName;
+          await FileSystem.copyAsync({ from: photo.uri, to: permanentUri });
+          setEditModal((m) => ({ ...m, imageUrl: permanentUri }));
+          setShowFullCamera(false);
+        }
+      } catch (error) {
+        console.log('Error taking photo:', error);
+        Alert.alert('Ошибка', 'Не удалось сделать фото');
+      }
     }
   };
 
@@ -334,8 +351,7 @@ export default function MyShelfScreen() {
   };
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.title}>Моя Полка</Text>
         <TouchableOpacity style={styles.clearButton} onPress={handleClearAll} activeOpacity={0.8}>
@@ -346,29 +362,29 @@ export default function MyShelfScreen() {
       <View style={styles.searchFilterContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Поиск..."
+          placeholder="Поиск по названию или заметкам..."
           placeholderTextColor="rgba(255,255,255,0.4)"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         <View style={styles.filterRow}>
           <TouchableOpacity
-            style={[styles.filterBtn, filter === 'all' && styles.filterBtnAllActive]}
+            style={[styles.filterBtn, filter === 'all' && styles.filterBtnActive]}
             onPress={() => setFilter('all')}
           >
             <Text style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>Все</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.filterBtn, filter === 'like' && styles.filterBtnLikeActive]}
+            style={[styles.filterBtn, filter === 'like' && styles.filterBtnActive]}
             onPress={() => setFilter('like')}
           >
-            <Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Likes</Text>
+            <Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Лайки</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.filterBtn, filter === 'dislike' && styles.filterBtnDislikeActive]}
+            style={[styles.filterBtn, filter === 'dislike' && styles.filterBtnActive]}
             onPress={() => setFilter('dislike')}
           >
-            <Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Dislikes</Text>
+            <Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Дизлайки</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -393,7 +409,7 @@ export default function MyShelfScreen() {
       )}
 
       <Modal
-        visible={editModal.visible}
+        visible={editModal.visible && !showFullCamera}
         transparent
         animationType="fade"
         onRequestClose={() => setEditModal((m) => ({ ...m, visible: false }))}
@@ -408,7 +424,7 @@ export default function MyShelfScreen() {
             <BlurView intensity={75} tint="dark" style={styles.editModalBox}>
               <Text style={styles.editModalTitle}>Редактировать</Text>
               <View style={styles.editImageRow}>
-                <TouchableOpacity onPress={pickImage} activeOpacity={0.8}>
+                <TouchableOpacity onPress={() => setShowFullCamera(true)} activeOpacity={0.8}>
                   <ProductImage 
                     imageUrl={editModal.imageUrl} 
                     style={styles.editModalImage} 
@@ -473,11 +489,31 @@ export default function MyShelfScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
-    </GestureHandlerRootView>
+
+      {showFullCamera && (
+        <View style={styles.fullCameraOverlay}>
+          <View style={styles.fullCameraContainer}>
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing="back"
+            />
+            {isFlashing && (
+              <View
+                style={[StyleSheet.absoluteFill, { backgroundColor: 'white', opacity: 0.5, zIndex: 2000 }]}
+                pointerEvents="none"
+              />
+            )}
+          </View>
+          <TouchableOpacity style={styles.captureBtn} onPress={takePhoto} />
+          <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setShowFullCamera(false)}>
+            <Text style={styles.cancelCameraText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -538,17 +574,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  filterBtnAllActive: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  filterBtnLikeActive: {
-    backgroundColor: 'rgba(76, 175, 80, 0.3)',
-    borderColor: 'rgba(76, 175, 80, 0.5)',
-  },
-  filterBtnDislikeActive: {
-    backgroundColor: 'rgba(244, 67, 54, 0.3)',
-    borderColor: 'rgba(244, 67, 54, 0.5)',
+  filterBtnActive: {
+    backgroundColor: 'rgba(74, 222, 128, 0.2)',
+    borderColor: '#4ade80',
   },
   filterBtnText: {
     color: 'rgba(255,255,255,0.6)',
@@ -561,7 +589,7 @@ const styles = StyleSheet.create({
   // List Styles
   listCard: {
     flexDirection: 'row',
-    height: 120,
+    height: 133,
     backgroundColor: '#252525',
     borderRadius: 12,
     marginHorizontal: 15,
@@ -569,8 +597,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   listImage: {
-    width: 90,
-    height: '100%',
+    width: 100,
+    height: 133,
+    borderRadius: 10,
     backgroundColor: 'rgba(0,0,0,0.2)',
   },
   listContent: {
@@ -759,5 +788,40 @@ const styles = StyleSheet.create({
   editModalBtnDelete: {
     backgroundColor: 'rgba(244, 67, 54, 0.15)',
     borderColor: 'rgba(244, 67, 54, 0.3)',
+  },
+  fullCameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    zIndex: 3000,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullCameraContainer: {
+    width: width,
+    height: width * (4 / 3),
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  captureBtn: {
+    position: 'absolute',
+    bottom: 40,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderWidth: 4,
+    borderColor: '#4ade80',
+  },
+  cancelCameraBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    padding: 10,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 20,
+  },
+  cancelCameraText: {
+    color: '#4ade80',
+    fontWeight: '600',
   },
 });
