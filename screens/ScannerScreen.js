@@ -15,7 +15,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -33,7 +33,6 @@ import Animated, {
   withTiming,
   withDelay,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 import { loadBarcodeResults, saveBarcodeResult } from '../storage';
 
 const { width, height } = Dimensions.get('window');
@@ -58,6 +57,7 @@ function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
 
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
+  const isFocused = useIsFocused();
   const [scanned, setScanned] = useState(false);
   const [isReadyToScan, setIsReadyToScan] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -126,20 +126,20 @@ export default function ScannerScreen() {
     setSavedResults(data);
   };
 
-  const handleBarCodeScanned = async ({ data }) => {
+  const onBarcodeScanned = async ({ type, data }) => {
     if (!isReadyToScan) return;
     setIsReadyToScan(false);
+    setScanned(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // Check if already saved (using most recent data)
     const saved = savedResults[data];
 
-    setScanned(true);
     setCurrentBarcode(data);
     currentBarcodeRef.current = data;
 
     if (saved) {
       // Local Hit
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setEditableName(saved.productName || `Product ${data}`);
       setSelectedImage(saved.imageUrl || null);
       setModalNotes(saved.notes || '');
@@ -153,8 +153,6 @@ export default function ScannerScreen() {
     }
 
     // Local Miss
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
     // Instant Reaction
     setProductLoading(true);
     setIsLoading(true);
@@ -343,14 +341,6 @@ export default function ScannerScreen() {
     };
   });
 
-  const rLeftGradientStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, -150], [0, 1], 'clamp'),
-  }));
-
-  const rRightGradientStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, 150], [0, 1], 'clamp'),
-  }));
-
   const saveResult = async (result) => {
     try {
       const newResults = await saveBarcodeResult(currentBarcode, result, savedResults, {
@@ -419,16 +409,21 @@ export default function ScannerScreen() {
     <View style={styles.container}>
       <GestureDetector gesture={tapGesture}>
         <View style={StyleSheet.absoluteFill}>
-          <CameraView
-            ref={cameraRef}
-            style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
-            facing="back"
-            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-            barcodeScannerSettings={{
-              barcodeTypes: ['qr', 'ean13', 'ean8'],
-            }}
-            focusPoint={focusPoint}
-          />
+          {isFocused ? (
+            <CameraView
+              key={isFocused ? 'active' : 'inactive'}
+              ref={cameraRef}
+              style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
+              facing="back"
+              onBarcodeScanned={scanned ? undefined : onBarcodeScanned}
+              barcodeScannerSettings={{
+                barcodeTypes: ['ean13', 'ean8', 'upc_a'],
+              }}
+              focusPoint={focusPoint}
+            />
+          ) : (
+            <View style={{ flex: 1, backgroundColor: 'black' }} />
+          )}
           <Animated.View style={[styles.focusFrame, rFocusStyle]} />
         </View>
       </GestureDetector>
@@ -474,24 +469,6 @@ export default function ScannerScreen() {
 
       {showModal && (
         <View style={styles.modalOverlay}>
-          {/* Iridescent Side Gradients */}
-          <Animated.View style={[styles.gradientSide, styles.gradientLeft, rLeftGradientStyle]}>
-            <LinearGradient
-              colors={['transparent', 'rgba(255, 50, 50, 0.5)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{ flex: 1 }}
-            />
-          </Animated.View>
-          <Animated.View style={[styles.gradientSide, styles.gradientRight, rRightGradientStyle]}>
-            <LinearGradient
-              colors={['transparent', 'rgba(50, 255, 50, 0.5)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{ flex: 1 }}
-            />
-          </Animated.View>
-
           <View style={styles.modalBackdrop}>
             <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
           </View>
@@ -671,15 +648,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
   },
-  gradientSide: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: width * 0.2,
-    zIndex: 5,
-  },
-  gradientLeft: { left: 0 },
-  gradientRight: { right: 0 },
   modalOverlay: {
     ...StyleSheet.absoluteFillObject,
   },
