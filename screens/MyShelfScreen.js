@@ -52,7 +52,7 @@ function ProductImage({ imageUrl, style, iconSize = 32 }) {
   }
   return (
     <View style={[style, styles.placeholderCenter]}>
-      <Ionicons name="cube-outline" size={iconSize} color="rgba(255,255,255,0.4)" />
+      <Ionicons name="cube-outline" size={iconSize} color="#E0E0E0" />
     </View>
   );
 }
@@ -96,7 +96,7 @@ function getDisplayName(entry) {
   return null;
 }
 
-export default function MyShelfScreen() {
+export default function MyShelfScreen({ navigation }) {
   const [items, setItems] = useState([]);
   const [rawResults, setRawResults] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -141,6 +141,11 @@ export default function MyShelfScreen() {
       refresh();
     }, [refresh])
   );
+
+  useEffect(() => {
+    navigation.setOptions({ tabBarStyle: { display: "none" } });
+    return () => navigation.setOptions({ tabBarStyle: undefined });
+  }, [navigation]);
 
   const filteredItems = items.filter((item) => {
     const matchesFilter = filter === 'all' || item.result === filter;
@@ -295,7 +300,7 @@ export default function MyShelfScreen() {
       return (
         <View style={styles.swipeLeftAction}>
           <Animated.View style={{ transform: [{ scale }] }}>
-            <Ionicons name="trash-outline" size={28} color="#fff" />
+            <Ionicons name="trash-outline" size={28} color="#E0E0E0" />
           </Animated.View>
         </View>
       );
@@ -322,27 +327,30 @@ export default function MyShelfScreen() {
             onPress={() => openEditItem(item)}
             activeOpacity={0.9}
           >
-            <ProductImage 
-              imageUrl={item.imageUrl} 
-              style={styles.listImage} 
-              iconSize={32}
-            />
-            
-            <View style={styles.listContent}>
-              <View style={styles.listHeader}>
-                <Text style={styles.listTitle} numberOfLines={2}>{displayName}</Text>
-                <View style={[styles.listBadge, item.result === 'like' ? styles.badgeLike : styles.badgeDislike]}>
-                  <Ionicons 
-                    name={item.result === 'like' ? 'thumbs-up' : 'thumbs-down'} 
-                    size={12} 
-                    color="#fff" 
-                  />
-                </View>
-              </View>
+            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={styles.listCardInner}>
+              <ProductImage 
+                imageUrl={item.imageUrl} 
+                style={styles.listImage} 
+                iconSize={32}
+              />
               
-              <Text style={styles.listDate}>
-                {formatDate(item.scannedAt).split(',')[0]}
-              </Text>
+              <View style={styles.listContent}>
+                <View style={styles.listHeader}>
+                  <Text style={styles.listTitle} numberOfLines={2}>{displayName}</Text>
+                  <View style={styles.listBadge}>
+                    <Ionicons 
+                      name={item.result === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                      size={14} 
+                      color="#E0E0E0" 
+                    />
+                  </View>
+                </View>
+                
+                <Text style={styles.listDate}>
+                  {formatDate(item.scannedAt).split(',')[0]}
+                </Text>
+              </View>
             </View>
           </TouchableOpacity>
         </Swipeable>
@@ -360,38 +368,44 @@ export default function MyShelfScreen() {
       </View>
 
       <View style={styles.searchFilterContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Поиск по названию или заметкам..."
-          placeholderTextColor="rgba(255,255,255,0.4)"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
+        <View style={styles.searchBarWrapper}>
+          <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Поиск по названию или заметкам..."
+            placeholderTextColor="rgba(160, 160, 165, 0.7)"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
         <View style={styles.filterRow}>
           <TouchableOpacity
             style={[styles.filterBtn, filter === 'all' && styles.filterBtnActive]}
             onPress={() => setFilter('all')}
           >
-            <Text style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>Все</Text>
+            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>Все</Text></View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterBtn, filter === 'like' && styles.filterBtnActive]}
             onPress={() => setFilter('like')}
           >
-            <Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Лайки</Text>
+            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Лайки</Text></View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterBtn, filter === 'dislike' && styles.filterBtnActive]}
             onPress={() => setFilter('dislike')}
           >
-            <Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Дизлайки</Text>
+            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Дизлайки</Text></View>
           </TouchableOpacity>
         </View>
       </View>
 
       {items.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="basket-outline" size={64} color="rgba(255,255,255,0.2)" style={{ marginBottom: 16 }} />
+          <Ionicons name="basket-outline" size={64} color="#E0E0E0" style={{ marginBottom: 16 }} />
           <Text style={styles.emptyText}>Ваша полка пуста</Text>
           <Text style={styles.emptySubtext}>Начните сканировать товары!</Text>
         </View>
@@ -404,9 +418,29 @@ export default function MyShelfScreen() {
           data={filteredItems}
           keyExtractor={(item) => item.barcode}
           renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: 100, paddingTop: 15 }}
+          contentContainerStyle={{ paddingBottom: 120, paddingTop: 15 }}
         />
       )}
+
+      {/* Floating Navigation Island */}
+      <View style={styles.floatingIsland}>
+        <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+        <TouchableOpacity style={styles.navButton} onPress={() => navigation.navigate('Scanner')}>
+          <Ionicons name="scan-outline" size={32} color="#E0E0E0" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.navButton}
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('Scanner')}
+        >
+          <Ionicons name="camera-outline" size={32} color="#E0E0E0" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.navButton} disabled>
+          <Ionicons name="library" size={32} color="#E0E0E0" />
+        </TouchableOpacity>
+      </View>
 
       <Modal
         visible={editModal.visible && !showFullCamera}
@@ -418,7 +452,7 @@ export default function MyShelfScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.editModalOverlay}
         >
-          <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
           <View style={styles.editModalBackdrop} />
           <View style={styles.editModalBoxWrap}>
             <BlurView intensity={75} tint="dark" style={styles.editModalBox}>
@@ -438,7 +472,7 @@ export default function MyShelfScreen() {
               <TextInput
                 style={styles.editNameInput}
                 placeholder="Название товара"
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor="rgba(160, 160, 165, 0.7)"
                 value={editModal.productName}
                 onChangeText={(text) => setEditModal((m) => ({ ...m, productName: text }))}
               />
@@ -459,7 +493,7 @@ export default function MyShelfScreen() {
               <TextInput
                 style={styles.editNotesInput}
                 placeholder="Заметки"
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor="rgba(160, 160, 165, 0.7)"
                 value={editModal.notes}
                 onChangeText={(notes) => setEditModal((m) => ({ ...m, notes }))}
                 multiline
@@ -525,24 +559,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
+    // borderBottomWidth: 1,
+    // borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   title: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 22,
     fontWeight: 'bold',
   },
   clearButton: {
     paddingVertical: 8,
     paddingHorizontal: 14,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderRadius: 30,
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
   },
   clearButtonText: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -551,15 +585,20 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     paddingTop: 8,
   },
-  searchInput: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 10,
-    color: '#fff',
-    fontSize: 16,
+  searchBarWrapper: {
+    borderRadius: 30,
+    overflow: 'hidden',
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    height: 46,
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+  },
+  searchInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    color: '#E0E0E0',
+    fontSize: 16,
   },
   filterRow: {
     flexDirection: 'row',
@@ -567,40 +606,56 @@ const styles = StyleSheet.create({
   },
   filterBtn: {
     flex: 1,
-    paddingVertical: 8,
+    height: 36,
+    borderRadius: 30,
+    overflow: 'hidden',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+  },
+  filterBtnContent: {
+    flex: 1,
     alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
   },
   filterBtnActive: {
-    backgroundColor: 'rgba(74, 222, 128, 0.2)',
-    borderColor: '#4ade80',
+    borderColor: '#E0E0E0',
+    backgroundColor: 'rgba(40, 40, 45, 0.9)',
   },
   filterBtnText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: '#E0E0E0',
     fontSize: 14,
     fontWeight: '600',
   },
   filterBtnTextActive: {
-    color: '#fff',
+    color: '#E0E0E0',
   },
   // List Styles
   listCard: {
-    flexDirection: 'row',
     height: 133,
-    backgroundColor: '#252525',
-    borderRadius: 12,
+    borderRadius: 30,
     marginHorizontal: 15,
     marginBottom: 12,
     overflow: 'hidden',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    // Shadows
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  listCardInner: {
+    flexDirection: 'row',
+    flex: 1,
   },
   listImage: {
     width: 100,
-    height: 133,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    height: '100%',
+    borderRadius: 30,
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
   },
   listContent: {
     flex: 1,
@@ -613,7 +668,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   listTitle: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 16,
     fontWeight: 'bold',
     flex: 1,
@@ -627,16 +682,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   listDate: {
-    color: 'rgba(255,255,255,0.4)',
+    color: 'rgba(160, 160, 165, 0.7)',
     fontSize: 12,
   },
   placeholderCenter: {
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
   },
-  badgeLike: { backgroundColor: '#4CAF50' },
-  badgeDislike: { backgroundColor: '#F44336' },
   swipeLeftAction: {
     backgroundColor: '#D32F2F',
     justifyContent: 'center',
@@ -654,12 +707,12 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   emptyText: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 18,
     marginBottom: 8,
   },
   emptySubtext: {
-    color: 'rgba(255,255,255,0.5)',
+    color: 'rgba(160, 160, 165, 0.7)',
     fontSize: 14,
   },
   editModalOverlay: {
@@ -669,23 +722,24 @@ const styles = StyleSheet.create({
   },
   editModalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   editModalBoxWrap: {
     width: '88%',
     maxWidth: 400,
-    borderRadius: 20,
+    borderRadius: 30,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
   },
   editModalBox: {
-    borderRadius: 20,
+    borderRadius: 30,
     padding: 22,
     overflow: 'hidden',
   },
   editModalTitle: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 12,
@@ -697,30 +751,30 @@ const styles = StyleSheet.create({
   editModalImage: {
     width: 100,
     height: 100,
-    borderRadius: 12,
+    borderRadius: 30,
   },
   editBadge: {
     position: 'absolute',
     bottom: -6,
     right: -6,
     backgroundColor: '#2196F3',
-    borderRadius: 12,
+    borderRadius: 30,
     width: 28,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#1a1a1a',
+    borderColor: '#121212',
   },
   editNameInput: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderRadius: 30,
     padding: 14,
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
   },
   verdictRow: {
     flexDirection: 'row',
@@ -730,40 +784,40 @@ const styles = StyleSheet.create({
   verdictButton: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 30,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
   },
   verdictButtonLikeActive: {
-    backgroundColor: 'rgba(76, 175, 80, 0.5)',
-    borderColor: '#4CAF50',
+    backgroundColor: 'rgba(40, 40, 45, 0.9)',
+    borderColor: '#E0E0E0',
   },
   verdictButtonDislikeActive: {
-    backgroundColor: 'rgba(244, 67, 54, 0.5)',
-    borderColor: '#f44336',
+    backgroundColor: 'rgba(40, 40, 45, 0.9)',
+    borderColor: '#E0E0E0',
   },
   verdictButtonText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(160, 160, 165, 0.7)',
     fontSize: 16,
     fontWeight: '600',
   },
   verdictButtonTextActive: {
-    color: '#fff',
+    color: '#E0E0E0',
   },
   editNotesInput: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderRadius: 30,
     padding: 14,
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 16,
     minHeight: 80,
     maxHeight: 120,
     textAlignVertical: 'top',
     marginBottom: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
   },
   editModalButtons: {
     flexDirection: 'row',
@@ -773,21 +827,21 @@ const styles = StyleSheet.create({
   editModalBtn: {
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 30,
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
     justifyContent: 'center',
   },
-  editModalBtnCancel: { backgroundColor: 'rgba(255,255,255,0.1)' },
-  editModalBtnSave: { backgroundColor: 'rgba(76, 175, 80, 0.9)' },
+  editModalBtnCancel: { backgroundColor: 'rgba(40, 40, 45, 0.7)' },
+  editModalBtnSave: { backgroundColor: 'rgba(40, 40, 45, 0.7)' },
   editModalBtnText: {
-    color: '#fff',
+    color: '#E0E0E0',
     fontSize: 16,
     fontWeight: '600',
   },
   editModalBtnDelete: {
-    backgroundColor: 'rgba(244, 67, 54, 0.15)',
-    borderColor: 'rgba(244, 67, 54, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderColor: 'rgba(80, 80, 85, 0.3)',
   },
   fullCameraOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -807,21 +861,43 @@ const styles = StyleSheet.create({
     bottom: 40,
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 30,
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
     borderWidth: 4,
-    borderColor: '#4ade80',
+    borderColor: 'rgba(80, 80, 85, 0.3)',
   },
   cancelCameraBtn: {
     position: 'absolute',
     top: 50,
     right: 20,
     padding: 10,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderRadius: 20,
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderRadius: 30,
   },
   cancelCameraText: {
-    color: '#4ade80',
+    color: '#E0E0E0',
     fontWeight: '600',
+  },
+  floatingIsland: {
+    position: 'absolute',
+    bottom: 30,
+    width: '90%',
+    height: 75,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    borderRadius: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    overflow: 'hidden',
+    borderWidth: 0.8,
+    borderColor: 'rgba(80, 80, 85, 0.3)',
+    zIndex: 100,
+  },
+  navButton: {
+    flex: 1,
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

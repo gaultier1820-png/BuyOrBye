@@ -23,7 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Gesture, GestureDetector, TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -50,12 +50,12 @@ function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
   }
   return (
     <View style={[styles.placeholderImage, { width: size, aspectRatio: 3 / 4 }]}>
-      <Ionicons name="cube-outline" size={size * 0.4} color="rgba(255,255,255,0.5)" />
+      <Ionicons name="cube-outline" size={size * 0.4} color="#E0E0E0" />
     </View>
   );
 }
 
-export default function ScannerScreen() {
+export default function ScannerScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const isFocused = useIsFocused();
   const [scanned, setScanned] = useState(false);
@@ -103,6 +103,11 @@ export default function ScannerScreen() {
       translateY.value = 0;
     }
   }, [showModal]);
+
+  useEffect(() => {
+    navigation.setOptions({ tabBarStyle: { display: "none" } });
+    return () => navigation.setOptions({ tabBarStyle: undefined });
+  }, [navigation]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -386,7 +391,7 @@ export default function ScannerScreen() {
 
   if (!permission) {
     return (
-      <View style={[styles.container, styles.placeholderContainer]}>
+      <View style={[styles.container, styles.placeholderContainer, { backgroundColor: '#EBEBEB' }]}>
         <Text style={styles.placeholderText}>Проверка разрешений…</Text>
         <StatusBar style="light" />
       </View>
@@ -395,7 +400,7 @@ export default function ScannerScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={[styles.container, styles.placeholderContainer]}>
+      <View style={[styles.container, styles.placeholderContainer, { backgroundColor: '#EBEBEB' }]}>
         <Text style={styles.permissionText}>Для сканирования штрихкодов нужен доступ к камере</Text>
         <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
           <Text style={styles.permissionButtonText}>Разрешить камеру</Text>
@@ -407,26 +412,28 @@ export default function ScannerScreen() {
 
   return (
     <View style={styles.container}>
+      {/* 1. Full Screen Camera */}
+      {isFocused && (
+        <CameraView
+          key={isFocused ? 'active' : 'inactive'}
+          ref={cameraRef}
+          style={StyleSheet.absoluteFillObject}
+          facing="back"
+          onBarcodeScanned={scanned ? undefined : onBarcodeScanned}
+          barcodeScannerSettings={{
+            barcodeTypes: ['ean13', 'ean8', 'upc_a'],
+          }}
+          focusPoint={focusPoint}
+        />
+      )}
+
       <GestureDetector gesture={tapGesture}>
-        <View style={StyleSheet.absoluteFill}>
-          {isFocused ? (
-            <CameraView
-              key={isFocused ? 'active' : 'inactive'}
-              ref={cameraRef}
-              style={[styles.camera, StyleSheet.absoluteFillObject, isReadyToScan && styles.cameraActive]}
-              facing="back"
-              onBarcodeScanned={scanned ? undefined : onBarcodeScanned}
-              barcodeScannerSettings={{
-                barcodeTypes: ['ean13', 'ean8', 'upc_a'],
-              }}
-              focusPoint={focusPoint}
-            />
-          ) : (
-            <View style={{ flex: 1, backgroundColor: 'black' }} />
-          )}
-          <Animated.View style={[styles.focusFrame, rFocusStyle]} />
-        </View>
+        <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
+      
+      <Animated.View style={[styles.focusFrame, rFocusStyle]} pointerEvents="none" />
+
+      {/* Flash Overlay */}
       {isFlashing && (
         <View
           style={[StyleSheet.absoluteFill, { backgroundColor: 'white', opacity: 0.5, zIndex: 2000 }]}
@@ -435,13 +442,13 @@ export default function ScannerScreen() {
       )}
 
       {barcodeResult && currentBarcode && (
-        <View style={styles.resultOverlay}>
-          <BlurView intensity={60} tint="dark" style={styles.glassCard}>
+        <View style={[styles.resultOverlay, { zIndex: 10 }]}>
+          <BlurView intensity={65} tint="light" style={styles.glassPanel}>
             <View style={styles.resultCardInner}>
               <Text style={styles.resultBarcodeText}>{currentBarcode}</Text>
               <View style={styles.resultBadge}>
                 <Text style={styles.resultText}>
-                  {barcodeResult === 'like' ? '✓ Like' : '✗ Dislike'}
+                  {barcodeResult === 'like' ? 'Like' : 'Dislike'}
                 </Text>
               </View>
             </View>
@@ -449,33 +456,43 @@ export default function ScannerScreen() {
         </View>
       )}
 
-      {!showModal && (
-        <View style={styles.scanButtonContainer}>
-          <BlurView intensity={80} tint="dark" style={styles.scanBlur}>
-            <TouchableOpacity
-              style={[styles.scanButton, isReadyToScan && styles.scanButtonActive]}
-              onPress={() => {
-                setScanned(false);
-                setBarcodeResult(null);
-                setCurrentBarcode(null);
-                setIsReadyToScan(true);
-              }}
-            >
-              <Text style={styles.scanButtonText}>{isReadyToScan ? 'Сканирую...' : 'SCAN'}</Text>
-            </TouchableOpacity>
-          </BlurView>
+      {/* 2. UI Overlay (One Single Layer) */}
+      {!showModal && !showFullCamera && (
+        <View style={styles.floatingIsland}>
+          <BlurView intensity={65} tint="light" style={StyleSheet.absoluteFill} />
+          
+          <TouchableOpacity style={styles.navButton} disabled>
+            <Ionicons name="scan-circle" size={32} color="rgba(47, 79, 79, 0.5)" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.navButton}
+            activeOpacity={0.7}
+            onPress={() => {
+              setScanned(false);
+              setBarcodeResult(null);
+              setCurrentBarcode(null);
+              setIsReadyToScan(true);
+            }}
+          >
+            <Ionicons name="camera-outline" size={32} color="#2F4F4F" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.navButton} onPress={() => navigation.navigate('MyShelf')}>
+            <Ionicons name="library-outline" size={32} color="#2F4F4F" />
+          </TouchableOpacity>
         </View>
       )}
 
       {showModal && (
         <View style={styles.modalOverlay}>
           <View style={styles.modalBackdrop}>
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
           </View>
 
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
-            <BlurView intensity={70} tint="dark" style={styles.modalContent}>
+            <BlurView intensity={65} tint="light" style={styles.modalContent}>
               <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={{ width: '100%' }}
@@ -489,7 +506,7 @@ export default function ScannerScreen() {
                 width: 40,
                 height: 5,
                 borderRadius: 3,
-                backgroundColor: 'rgba(255,255,255,0.2)',
+                backgroundColor: 'rgba(47, 79, 79, 0.2)',
                 marginTop: 10,
                 alignSelf: 'center'
               }} />
@@ -503,7 +520,7 @@ export default function ScannerScreen() {
                 </TouchableOpacity>
                 {productLoading && (
                   <View style={styles.loaderWrap}>
-                    <ActivityIndicator size="small" color="#4CAF50" />
+                    <ActivityIndicator size="small" color="#2F4F4F" />
                   </View>
                 )}
               </View>
@@ -512,7 +529,7 @@ export default function ScannerScreen() {
                 value={editableName}
                 onChangeText={setEditableName}
                 placeholder="Название товара"
-                placeholderTextColor="rgba(255,255,255,0.4)"
+                placeholderTextColor="rgba(47, 79, 79, 0.5)"
                 multiline
               />
               {existingVerdict && (
@@ -521,7 +538,7 @@ export default function ScannerScreen() {
                     <Ionicons 
                       name={existingVerdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
                       size={20} 
-                      color="#fff" 
+                      color="#2F4F4F" 
                     />
                   </View>
                   {lastScannedDate && (
@@ -536,7 +553,7 @@ export default function ScannerScreen() {
               <TextInput
                 style={styles.notesInput}
                 placeholder="Короткий комментарий (по желанию)"
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor="rgba(47, 79, 79, 0.5)"
                 value={modalNotes}
                 onChangeText={setModalNotes}
                 multiline
@@ -547,13 +564,13 @@ export default function ScannerScreen() {
                   style={styles.actionButton}
                   onPress={() => handleSwipeComplete('dislike')}
                 >
-                  <MaterialCommunityIcons name="thumb-down-outline" size={30} color="grey" />
+                  <MaterialCommunityIcons name="thumb-down-outline" size={28} color="#2F4F4F" />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.actionButton}
                   onPress={() => handleSwipeComplete('like')}
                 >
-                  <MaterialCommunityIcons name="thumb-up-outline" size={30} color="grey" />
+                  <MaterialCommunityIcons name="thumb-up-outline" size={28} color="#2F4F4F" />
                 </TouchableOpacity>
               </View>
                 </ScrollView>
@@ -587,28 +604,29 @@ export default function ScannerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#EBEBEB',
   },
-  camera: { flex: 1 },
   placeholderContainer: {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  placeholderText: { color: '#fff', fontSize: 18 },
+  placeholderText: { color: '#2F4F4F', fontSize: 18 },
   permissionText: {
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 18,
     marginBottom: 20,
     textAlign: 'center',
   },
   permissionButton: {
-    backgroundColor: 'rgba(76, 175, 80, 0.9)',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     paddingHorizontal: 30,
     paddingVertical: 15,
     borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: 'silver',
   },
   permissionButtonText: {
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -621,30 +639,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  glassCard: {
+  glassPanel: {
     overflow: 'hidden',
     borderRadius: 24,
     padding: 28,
     minWidth: width * 0.8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 0.5,
+    borderColor: 'silver',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
   },
   resultCardInner: { alignItems: 'center' },
   resultBarcodeText: {
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 15,
     textAlign: 'center',
   },
   resultBadge: {
-    backgroundColor: 'rgba(76, 175, 80, 0.9)',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     paddingHorizontal: 30,
     paddingVertical: 15,
     borderRadius: 25,
+    borderWidth: 0.5,
+    borderColor: 'silver',
   },
   resultText: {
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 24,
     fontWeight: 'bold',
   },
@@ -659,7 +680,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   modalContentWrap: {
     width: width * 0.9,
@@ -676,9 +697,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
     position: 'relative',
+    borderWidth: 0.5,
+    borderColor: 'silver',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
   },
   modalTitle: {
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 14,
@@ -696,63 +720,63 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   productImage: {
-    borderRadius: 12,
+    borderRadius: 24,
     backgroundColor: 'rgba(0,0,0,0.3)',
     width: 120,
     aspectRatio: 3 / 4,
   },
   placeholderImage: {
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 24,
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'silver',
     width: 120,
     aspectRatio: 3 / 4,
   },
   nameInput: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     borderRadius: 12,
     padding: 12,
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 18,
     fontWeight: '600',
     width: '100%',
     marginBottom: 8,
     textAlign: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'silver',
   },
   editBadge: {
     position: 'absolute',
     bottom: -6,
     right: -6,
-    backgroundColor: '#2196F3',
+    backgroundColor: 'rgba(47, 79, 79, 0.2)',
     borderRadius: 12,
     width: 28,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#1a1a1a',
+    borderColor: '#fff',
   },
   modalBarcodeSmall: {
-    color: 'rgba(255,255,255,0.6)',
+    color: '#2F4F4F',
     fontSize: 14,
     marginBottom: 16,
   },
   notesLabel: {
-    color: 'rgba(255,255,255,0.8)',
+    color: '#2F4F4F',
     fontSize: 14,
     alignSelf: 'stretch',
     marginBottom: 6,
   },
   notesInput: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     borderRadius: 14,
     padding: 12,
-    color: '#fff',
+    color: '#2F4F4F',
     fontSize: 16,
     minHeight: 56,
     maxHeight: 100,
@@ -760,37 +784,33 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlignVertical: 'top',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'silver',
   },
   cameraActive: {
     borderWidth: 2,
-    borderColor: '#4CAF50',
+    borderColor: 'rgba(255,255,255,0.8)',
   },
-  scanButtonContainer: {
+  floatingIsland: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: 30,
+    width: '90%',
+    height: 75,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
+    borderRadius: 40,
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingBottom: 110,
-  },
-  scanBlur: {
-    borderRadius: 30,
+    justifyContent: 'space-around',
     overflow: 'hidden',
+    zIndex: 100,
+    borderWidth: 0.5,
+    borderColor: 'silver',
   },
-  scanButton: {
-    backgroundColor: 'rgba(74, 222, 128, 0.4)',
-    paddingVertical: 20,
-    paddingHorizontal: 60,
-  },
-  scanButtonActive: {
-    backgroundColor: 'rgba(74, 222, 128, 0.8)',
-  },
-  scanButtonText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    letterSpacing: 1,
+  navButton: {
+    flex: 1,
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   verdictContainer: {
     alignItems: 'center',
@@ -802,14 +822,14 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'white',
+    borderColor: '#2F4F4F',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
     backgroundColor: 'transparent',
   },
   dateText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: '#2F4F4F',
     fontSize: 12,
   },
   actionButtonsContainer: {
@@ -825,16 +845,17 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: 'grey',
+    borderColor: 'silver',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
   },
   focusFrame: {
     position: 'absolute',
     width: 60,
     height: 60,
     borderWidth: 2,
-    borderColor: '#4ade80',
+    borderColor: '#fff',
     borderRadius: 8,
     top: 0,
     left: 0,
@@ -880,9 +901,9 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(220, 220, 225, 0.4)',
     borderWidth: 4,
-    borderColor: 'rgba(0,0,0,0.2)',
+    borderColor: 'silver',
   },
   cancelCameraBtn: {
     position: 'absolute',
