@@ -152,12 +152,6 @@ export default function MyShelfScreen({ navigation }) {
   );
 
   useEffect(() => {
-    navigation.setOptions({ tabBarStyle: { display: "none" } });
-    return () => navigation.setOptions({ tabBarStyle: undefined });
-  }, [navigation]);
-
-  // Handle Back Button to prevent exiting the app or going to Scanner when overlay is open
-  useEffect(() => {
     const onBackPress = () => {
       if (showFullCamera) {
         setShowFullCamera(false);
@@ -173,6 +167,12 @@ export default function MyShelfScreen({ navigation }) {
     const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => subscription.remove();
   }, [showFullCamera, editModal.visible]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: { display: (showFullCamera || editModal.visible) ? 'none' : 'flex' }
+    });
+  }, [navigation, showFullCamera, editModal.visible]);
 
   const filteredItems = items.filter((item) => {
     const matchesFilter = filter === 'all' || item.result === filter;
@@ -448,26 +448,6 @@ export default function MyShelfScreen({ navigation }) {
           contentContainerStyle={{ paddingBottom: 120, paddingTop: 15 }}
         />
       )}
-
-      {/* Floating Navigation Island */}
-      <View style={styles.floatingIsland}>
-        <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
-        <TouchableOpacity style={styles.navButton} onPress={() => navigation.navigate('Scanner')}>
-          <Ionicons name="scan-outline" size={32} color="#E0E0E0" />
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.navButton}
-          activeOpacity={0.7}
-          onPress={() => navigation.navigate('Scanner')}
-        >
-          <Ionicons name="camera-outline" size={32} color="#E0E0E0" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.navButton} disabled>
-          <Ionicons name="library" size={32} color="#E0E0E0" />
-        </TouchableOpacity>
-      </View>
 
       <Modal
         visible={editModal.visible && !showFullCamera}
@@ -894,27 +874,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 0.8,
     borderColor: 'rgba(80, 80, 85, 0.3)',
-  },
-  floatingIsland: {
-    position: 'absolute',
-    bottom: 30,
-    width: '90%',
-    height: 75,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(40, 40, 45, 0.7)',
-    borderRadius: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    overflow: 'hidden',
-    borderWidth: 0.8,
-    borderColor: 'rgba(80, 80, 85, 0.3)',
-    zIndex: 100,
-  },
-  navButton: {
-    flex: 1,
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });
