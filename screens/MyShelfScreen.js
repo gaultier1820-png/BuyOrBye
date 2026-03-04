@@ -13,9 +13,10 @@ import {
   Animated,
   Image,
   Dimensions,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useRoute } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView } from 'expo-camera';
@@ -114,6 +115,8 @@ export default function MyShelfScreen({ navigation }) {
   const cameraRef = useRef(null);
   const [isFlashing, setIsFlashing] = useState(false);
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
+  const route = useRoute();
 
   const refresh = useCallback(async () => {
     const data = await loadBarcodeResults();
@@ -139,6 +142,12 @@ export default function MyShelfScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       refresh();
+      // Reset state if navigated with specific params or just generally on focus to ensure list view
+      if (route.params?.screen === 'ShelfList') {
+        setEditModal(m => ({ ...m, visible: false }));
+        setShowFullCamera(false);
+        navigation.setParams({ screen: undefined });
+      }
     }, [refresh])
   );
 
@@ -146,6 +155,24 @@ export default function MyShelfScreen({ navigation }) {
     navigation.setOptions({ tabBarStyle: { display: "none" } });
     return () => navigation.setOptions({ tabBarStyle: undefined });
   }, [navigation]);
+
+  // Handle Back Button to prevent exiting the app or going to Scanner when overlay is open
+  useEffect(() => {
+    const onBackPress = () => {
+      if (showFullCamera) {
+        setShowFullCamera(false);
+        return true;
+      }
+      if (editModal.visible) {
+        setEditModal(m => ({ ...m, visible: false }));
+        return true;
+      }
+      return false;
+    };
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => subscription.remove();
+  }, [showFullCamera, editModal.visible]);
 
   const filteredItems = items.filter((item) => {
     const matchesFilter = filter === 'all' || item.result === filter;
@@ -526,23 +553,26 @@ export default function MyShelfScreen({ navigation }) {
 
       {showFullCamera && (
         <View style={styles.fullCameraOverlay}>
-          <View style={styles.fullCameraContainer}>
+          {isFocused && (
             <CameraView
+              key={isFocused ? 'shelf-rephoto-active' : 'shelf-rephoto-inactive'}
               ref={cameraRef}
-              style={StyleSheet.absoluteFill}
+              style={StyleSheet.absoluteFillObject}
               facing="back"
             />
-            {isFlashing && (
-              <View
-                style={[StyleSheet.absoluteFill, { backgroundColor: 'white', opacity: 0.5, zIndex: 2000 }]}
-                pointerEvents="none"
-              />
-            )}
+          )}
+          {isFlashing && (
+            <View
+              style={[StyleSheet.absoluteFill, { backgroundColor: 'white', opacity: 0.5, zIndex: 2000 }]}
+              pointerEvents="none"
+            />
+          )}
+          
+          <View style={styles.captureContainer}>
+            <TouchableOpacity style={styles.roundCaptureBtn} onPress={takePhoto}>
+              <Ionicons name="camera" size={32} color="#E0E0E0" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.captureBtn} onPress={takePhoto} />
-          <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setShowFullCamera(false)}>
-            <Text style={styles.cancelCameraText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -850,33 +880,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  fullCameraContainer: {
-    width: width,
-    height: width * (4 / 3),
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  captureBtn: {
+  captureContainer: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 50,
+    alignSelf: 'center',
+  },
+  roundCaptureBtn: {
     width: 80,
     height: 80,
-    borderRadius: 30,
+    borderRadius: 40,
     backgroundColor: 'rgba(40, 40, 45, 0.7)',
-    borderWidth: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 0.8,
     borderColor: 'rgba(80, 80, 85, 0.3)',
-  },
-  cancelCameraBtn: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    padding: 10,
-    backgroundColor: 'rgba(40, 40, 45, 0.7)',
-    borderRadius: 30,
-  },
-  cancelCameraText: {
-    color: '#E0E0E0',
-    fontWeight: '600',
   },
   floatingIsland: {
     position: 'absolute',

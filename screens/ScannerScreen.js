@@ -478,7 +478,7 @@ export default function ScannerScreen({ navigation }) {
             <Ionicons name="camera-outline" size={32} color="#2F4F4F" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.navButton} onPress={() => navigation.navigate('MyShelf')}>
+          <TouchableOpacity style={styles.navButton} onPress={() => navigation.navigate('MyShelf', { screen: 'ShelfList' })}>
             <Ionicons name="library-outline" size={32} color="#2F4F4F" />
           </TouchableOpacity>
         </View>
@@ -583,17 +583,20 @@ export default function ScannerScreen({ navigation }) {
 
       {showFullCamera && (
         <View style={styles.fullCameraOverlay}>
-          <View style={styles.fullCameraContainer}>
+          {isFocused && (
             <CameraView
+              key={isFocused ? 'rephoto-active' : 'rephoto-inactive'}
               ref={fullCameraRef}
-              style={StyleSheet.absoluteFill}
+              style={StyleSheet.absoluteFillObject}
               facing="back"
             />
+          )}
+          
+          <View style={styles.captureContainer}>
+            <TouchableOpacity style={styles.roundCaptureBtn} onPress={takePhoto}>
+              <Ionicons name="camera" size={32} color="#E0E0E0" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.captureBtn} onPress={takePhoto} />
-          <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setShowFullCamera(false)}>
-            <Text style={styles.cancelCameraText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       )}
       <StatusBar style="light" />
