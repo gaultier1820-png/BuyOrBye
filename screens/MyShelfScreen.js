@@ -23,7 +23,6 @@ import { CameraView } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
-import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { 
   loadBarcodeResults,
   removeBarcodeResult,
@@ -58,8 +57,10 @@ function ProductImage({ imageUrl, style, iconSize = 32 }) {
   );
 }
 
-function AnimatedCard({ index, children }) {
+function AnimatedCard({ index, isDeleting, children }) {
   const anim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
   useEffect(() => {
     Animated.timing(anim, {
       toValue: 1,
@@ -68,10 +69,20 @@ function AnimatedCard({ index, children }) {
       useNativeDriver: true,
     }).start();
   }, [index, anim]);
+
+  useEffect(() => {
+    Animated.spring(scaleAnim, {
+      toValue: isDeleting ? 0.95 : 1,
+      friction: 5,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  }, [isDeleting, scaleAnim]);
+
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] });
   const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale: scaleAnim }] }}>
       {children}
     </Animated.View>
   );
@@ -101,6 +112,7 @@ export default function MyShelfScreen({ navigation }) {
   const [items, setItems] = useState([]);
   const [rawResults, setRawResults] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [deletingItemId, setDeletingItemId] = useState(null);
   const [filter, setFilter] = useState('all');
   const [editModal, setEditModal] = useState({
     visible: false,
@@ -173,6 +185,21 @@ export default function MyShelfScreen({ navigation }) {
       tabBarStyle: { display: (showFullCamera || editModal.visible) ? 'none' : 'flex' }
     });
   }, [navigation, showFullCamera, editModal.visible]);
+
+  const confirmDelete = (barcode) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    Alert.alert(
+      'Удалить?',
+      'Удалить этот товар из истории?',
+      [
+        { text: 'Отмена', style: 'cancel', onPress: () => setDeletingItemId(null) },
+        { text: 'Удалить', style: 'destructive', onPress: () => { 
+          handleDelete(barcode); 
+          setDeletingItemId(null); 
+        } }
+      ]
+    );
+  };
 
   const filteredItems = items.filter((item) => {
     const matchesFilter = filter === 'all' || item.result === filter;
@@ -318,43 +345,24 @@ export default function MyShelfScreen({ navigation }) {
   const renderItem = ({ item, index }) => {
     const displayName = getDisplayName(item) || item.barcode;
 
-    const renderLeftActions = (progress, dragX) => {
-      const scale = dragX.interpolate({
-        inputRange: [0, 100],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-      });
-      return (
-        <View style={styles.swipeLeftAction}>
-          <Animated.View style={{ transform: [{ scale }] }}>
-            <Ionicons name="trash-outline" size={28} color="#E0E0E0" />
-          </Animated.View>
-        </View>
-      );
-    };
-
     return (
-      <AnimatedCard index={index}>
-        <Swipeable
-          renderLeftActions={renderLeftActions}
-          onSwipeableOpen={() => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            Alert.alert(
-              'Удалить?',
-              'Удалить этот товар из истории?',
-              [
-                { text: 'Отмена', style: 'cancel', onPress: () => refresh() },
-                { text: 'Удалить', style: 'destructive', onPress: () => handleDelete(item.barcode) }
-              ]
-            );
-          }}
-        >
+      <AnimatedCard index={index} isDeleting={deletingItemId === item.barcode}>
           <TouchableOpacity
             style={styles.listCard}
-            onPress={() => openEditItem(item)}
+            onPress={() => {
+              if (deletingItemId) {
+                setDeletingItemId(null);
+              } else {
+                openEditItem(item);
+              }
+            }}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              setDeletingItemId(item.barcode);
+            }}
             activeOpacity={0.9}
           >
-            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={styles.listCardInner}>
               <ProductImage 
                 imageUrl={item.imageUrl} 
@@ -363,15 +371,20 @@ export default function MyShelfScreen({ navigation }) {
               />
               
               <View style={styles.listContent}>
-                <View style={styles.listHeader}>
-                  <Text style={styles.listTitle} numberOfLines={2}>{displayName}</Text>
-                  <View style={styles.listBadge}>
-                    <Ionicons 
-                      name={item.result === 'like' ? 'thumbs-up' : 'thumbs-down'} 
-                      size={14} 
-                      color="#E0E0E0" 
-                    />
+                <View>
+                  <View style={styles.listHeader}>
+                    <Text style={styles.listTitle} numberOfLines={2}>{displayName}</Text>
+                    <View style={styles.listBadge}>
+                      <Ionicons 
+                        name={item.result === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                        size={14} 
+                        color="#E0E0E0" 
+                      />
+                    </View>
                   </View>
+                  {item.notes && (
+                    <Text style={styles.noteText} numberOfLines={2}>{item.notes}</Text>
+                  )}
                 </View>
                 
                 <Text style={styles.listDate}>
@@ -379,8 +392,17 @@ export default function MyShelfScreen({ navigation }) {
                 </Text>
               </View>
             </View>
+            
+            {deletingItemId === item.barcode && (
+              <TouchableOpacity
+                style={styles.deleteOverlayButton}
+                onPress={() => confirmDelete(item.barcode)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="trash-outline" size={20} color="#E0E0E0" />
+              </TouchableOpacity>
+            )}
           </TouchableOpacity>
-        </Swipeable>
       </AnimatedCard>
     );
   };
@@ -396,7 +418,7 @@ export default function MyShelfScreen({ navigation }) {
 
       <View style={styles.searchFilterContainer}>
         <View style={styles.searchBarWrapper}>
-          <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
           <TextInput
             style={styles.searchInput}
             placeholder="Поиск по названию или заметкам..."
@@ -410,21 +432,21 @@ export default function MyShelfScreen({ navigation }) {
             style={[styles.filterBtn, filter === 'all' && styles.filterBtnActive]}
             onPress={() => setFilter('all')}
           >
-            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>Все</Text></View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterBtn, filter === 'like' && styles.filterBtnActive]}
             onPress={() => setFilter('like')}
           >
-            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'like' && styles.filterBtnTextActive]}>Лайки</Text></View>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterBtn, filter === 'dislike' && styles.filterBtnActive]}
             onPress={() => setFilter('dislike')}
           >
-            <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+            <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={styles.filterBtnContent}><Text style={[styles.filterBtnText, filter === 'dislike' && styles.filterBtnTextActive]}>Дизлайки</Text></View>
           </TouchableOpacity>
         </View>
@@ -459,10 +481,10 @@ export default function MyShelfScreen({ navigation }) {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.editModalOverlay}
         >
-          <BlurView intensity={75} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
           <View style={styles.editModalBackdrop} />
           <View style={styles.editModalBoxWrap}>
-            <BlurView intensity={75} tint="dark" style={styles.editModalBox}>
+            <BlurView intensity={70} tint="dark" style={styles.editModalBox}>
               <Text style={styles.editModalTitle}>Редактировать</Text>
               <View style={styles.editImageRow}>
                 <TouchableOpacity onPress={() => setShowFullCamera(true)} activeOpacity={0.8}>
@@ -642,7 +664,7 @@ const styles = StyleSheet.create({
   },
   // List Styles
   listCard: {
-    height: 133,
+    minHeight: 133,
     borderRadius: 30,
     marginHorizontal: 15,
     marginBottom: 12,
@@ -691,6 +713,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  noteText: {
+    color: 'rgba(160, 160, 165, 0.7)',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+  },
   listDate: {
     color: 'rgba(160, 160, 165, 0.7)',
     fontSize: 12,
@@ -700,15 +728,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(40, 40, 45, 0.7)',
   },
-  swipeLeftAction: {
-    backgroundColor: '#D32F2F',
+  deleteOverlayButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(200, 50, 50, 0.8)',
     justifyContent: 'center',
-    alignItems: 'flex-start',
-    paddingLeft: 30,
-    flex: 1,
-    marginHorizontal: 15,
-    marginBottom: 12,
-    borderRadius: 12,
+    alignItems: 'center',
+    zIndex: 10,
+    borderWidth: 0.8,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   empty: {
     flex: 1,

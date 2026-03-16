@@ -490,19 +490,20 @@ export default function ScannerScreen({ navigation }) {
       )}
 
       {showModal && (
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={20}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalBackdrop}>
             <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
           </View>
 
           <GestureDetector gesture={pan}>
             <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
-            <BlurView intensity={65} tint="dark" style={styles.modalContent}>
-              <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ width: '100%' }}
-              >
+            <BlurView intensity={70} tint="dark" style={styles.modalContent}>
                 <ScrollView
+                  style={{ width: '100%' }}
                   contentContainerStyle={{ alignItems: 'center' }}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
@@ -579,11 +580,10 @@ export default function ScannerScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
                 </ScrollView>
-              </KeyboardAvoidingView>
             </BlurView>
           </Animated.View>
           </GestureDetector>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       {showFullCamera && (
@@ -676,9 +676,6 @@ const styles = StyleSheet.create({
     color: '#E0E0E0',
     fontSize: 24,
     fontWeight: 'bold',
-  },
-  modalOverlay: {
-    ...StyleSheet.absoluteFillObject,
   },
   modalOverlay: {
     ...StyleSheet.absoluteFillObject,
