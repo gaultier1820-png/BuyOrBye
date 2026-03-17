@@ -14,6 +14,7 @@ import {
   Image,
   Dimensions,
   BackHandler,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused, useRoute } from '@react-navigation/native';
@@ -163,6 +164,24 @@ export default function MyShelfScreen({ navigation }) {
     }, [refresh])
   );
 
+  // Listen for background background database updates from Scanner
+  useEffect(() => {
+    const subAdd = DeviceEventEmitter.addListener('SHELF_OPTIMISTIC_ADD', (newItem) => {
+      setRawResults((prev) => ({ ...prev, [newItem.barcode]: newItem }));
+      setItems((prev) => {
+        const filtered = prev.filter(i => i.barcode !== newItem.barcode);
+        return [newItem, ...filtered].sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
+      });
+    });
+
+    const subUpdate = DeviceEventEmitter.addListener('SHELF_UPDATED', refresh);
+
+    return () => {
+      subAdd.remove();
+      subUpdate.remove();
+    };
+  }, [refresh]);
+
   useEffect(() => {
     const onBackPress = () => {
       if (showFullCamera) {
@@ -212,11 +231,19 @@ export default function MyShelfScreen({ navigation }) {
     return name.includes(q) || brand.includes(q) || notes.includes(q);
   });
 
-  const handleDelete = async (barcode) => {
-    const next = await removeBarcodeResult(barcode, rawResults);
-    setRawResults(next);
+  const handleDelete = (barcode) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setItems((prev) => prev.filter((i) => i.barcode !== barcode));
     setEditModal((m) => ({ ...m, visible: false }));
+    setTimeout(async () => {
+      try {
+        const next = await removeBarcodeResult(barcode, rawResults);
+        setRawResults(next);
+        DeviceEventEmitter.emit('SHELF_UPDATED');
+      } catch (error) {
+        console.error('Failed to delete in background:', error);
+      }
+    }, 0);
   };
 
   const handleClearAll = () => {
@@ -228,10 +255,17 @@ export default function MyShelfScreen({ navigation }) {
         {
           text: 'Очистить',
           style: 'destructive',
-          onPress: async () => {
-            await clearAllBarcodeResults();
-            setRawResults({});
-            setItems([]);
+          onPress: () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            setRawResults({}); setItems([]);
+            setTimeout(async () => {
+              try {
+                await clearAllBarcodeResults();
+                DeviceEventEmitter.emit('SHELF_UPDATED');
+              } catch (error) {
+                console.error('Failed to clear all in background:', error);
+              }
+            }, 0);
           },
         },
       ]
@@ -276,7 +310,6 @@ export default function MyShelfScreen({ navigation }) {
                 setEditModal((m) => ({ ...m, imageUrl: result.assets[0].uri }));
               }
             } catch (error) {
-              console.log('Gallery error:', error);
               Alert.alert('Ошибка', 'Не удалось выбрать фото');
             }
           },
@@ -284,7 +317,6 @@ export default function MyShelfScreen({ navigation }) {
         { text: 'Отмена', style: 'cancel' },
       ]);
     } catch (e) {
-      console.log('PickImage error:', e);
     }
   };
 
@@ -299,47 +331,68 @@ export default function MyShelfScreen({ navigation }) {
           quality: 0.8,
         });
         if (photo.uri) {
-          const fileName = Date.now() + '.jpg';
-          const permanentUri = FileSystem.documentDirectory + fileName;
-          await FileSystem.copyAsync({ from: photo.uri, to: permanentUri });
-          setEditModal((m) => ({ ...m, imageUrl: permanentUri }));
+          setEditModal((m) => ({ ...m, imageUrl: photo.uri })); // Optimistic update
           setShowFullCamera(false);
         }
       } catch (error) {
-        console.log('Error taking photo:', error);
         Alert.alert('Ошибка', 'Не удалось сделать фото');
       }
     }
   };
 
-  const handleUpdate = async () => {
+  const handleUpdate = () => {
     const { barcode, productName, brand, notes, imageUrl, result } = editModal;
     if (barcode == null) return;
 
-    const next = await saveBarcodeResult(barcode, result, rawResults, {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // OPTIMISTIC UI: Instantly update memory to free the JS thread
+    const optimisticEntry = {
+      result,
+      scannedAt: rawResults[barcode]?.scannedAt || Date.now(),
       productName,
       brand,
       notes,
       imageUrl,
-    });
-
-    setRawResults(next);
-    const list = Object.entries(next)
+    };
+    const optimisticRaw = { ...rawResults, [barcode]: optimisticEntry };
+    setRawResults(optimisticRaw);
+    
+    const list = Object.entries(optimisticRaw)
       .map(([bc, entry]) => {
         const e = typeof entry === 'string' ? { result: entry, scannedAt: 0 } : entry;
         return {
-          barcode: bc,
-          result: e.result,
-          scannedAt: e.scannedAt || 0,
-          productName: e.productName,
-          brand: e.brand,
-          notes: e.notes != null ? String(e.notes) : '',
+          barcode: bc, result: e.result, scannedAt: e.scannedAt || 0,
+          productName: e.productName, brand: e.brand, notes: e.notes != null ? String(e.notes) : '',
           imageUrl: e.imageUrl != null ? String(e.imageUrl) : null,
         };
-      })
-      .sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
+      }).sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
+      
     setItems(list);
     setEditModal({ visible: false, barcode: null, productName: '', brand: '', notes: '', imageUrl: null, result: 'like' });
+
+    // ASYNC SAVING: Push processing to the background
+    setTimeout(async () => {
+      try {
+        let finalImageUrl = imageUrl;
+
+        if (imageUrl && !imageUrl.startsWith(FileSystem.documentDirectory)) {
+          const fileName = Date.now() + '.jpg';
+          const permanentUri = FileSystem.documentDirectory + fileName;
+          await FileSystem.copyAsync({ from: imageUrl, to: permanentUri });
+          finalImageUrl = permanentUri;
+        }
+
+        const next = await saveBarcodeResult(barcode, result, rawResults, {
+          productName, brand, notes, imageUrl: finalImageUrl,
+        });
+
+        setRawResults(next);
+        DeviceEventEmitter.emit('SHELF_UPDATED');
+      } catch (error) {
+        console.error('Failed to update shelf item in background:', error);
+      }
+    }, 0);
   };
 
   const renderItem = ({ item, index }) => {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -22,7 +22,6 @@ import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -30,15 +29,26 @@ import Animated, {
   withSpring,
   runOnJS,
   interpolate,
-  withTiming,
   withDelay,
+  withTiming,
 } from 'react-native-reanimated';
-import { loadBarcodeResults, saveBarcodeResult } from '../storage';
+import { loadBarcodeResults } from '../storage';
+
+import { ProductService } from '../services/storageService';
 
 const { width, height } = Dimensions.get('window');
 const IMAGE_SIZE = 120;
 
-function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
+const initialItemData = {
+  name: '',
+  image: null,
+  notes: '',
+  verdict: null,
+  date: null,
+  loading: false,
+};
+
+const ProductImage = React.memo(({ imageUrl, size = IMAGE_SIZE }) => {
   if (imageUrl) {
     return (
       <Image
@@ -53,31 +63,53 @@ function ProductImage({ imageUrl, size = IMAGE_SIZE }) {
       <Ionicons name="cube-outline" size={size * 0.4} color="#E0E0E0" />
     </View>
   );
-}
+});
+
+const ActionButtons = React.memo(({ onSwipeComplete }) => (
+  <View style={styles.actionButtonsContainer}>
+    <TouchableOpacity
+      style={styles.actionButton}
+      onPress={() => onSwipeComplete('dislike')}
+    >
+      <MaterialCommunityIcons name="thumb-down-outline" size={28} color="#E0E0E0" />
+    </TouchableOpacity>
+    <TouchableOpacity
+      style={styles.actionButton}
+      onPress={() => onSwipeComplete('like')}
+    >
+      <MaterialCommunityIcons name="thumb-up-outline" size={28} color="#E0E0E0" />
+    </TouchableOpacity>
+  </View>
+));
 
 export default function ScannerScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const isFocused = useIsFocused();
   const [scanned, setScanned] = useState(false);
-  const [canScan, setCanScan] = useState(false);
+  const [isScanningActive, setIsScanningActive] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentBarcode, setCurrentBarcode] = useState(null);
   const currentBarcodeRef = useRef(null);
   const cameraRef = useRef(null);
-  const fullCameraRef = useRef(null);
   const [showFullCamera, setShowFullCamera] = useState(false);
   const [barcodeResult, setBarcodeResult] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [savedResults, setSavedResults] = useState({});
-  const [editableName, setEditableName] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [productLoading, setProductLoading] = useState(false);
-  const [modalNotes, setModalNotes] = useState('');
-  const [existingVerdict, setExistingVerdict] = useState(null);
-  const [lastScannedDate, setLastScannedDate] = useState(null);
   const [isFlashing, setIsFlashing] = useState(false);
   const [focusPoint, setFocusPoint] = useState(null);
   const insets = useSafeAreaInsets();
+
+  const [itemData, setItemData] = useState(initialItemData);
+
+  // Ref to hold latest state for callbacks, preventing re-creation of expensive components
+  const stateRef = useRef({});
+  stateRef.current = {
+    isScanningActive,
+    scanned,
+    savedResults,
+    currentBarcode: currentBarcodeRef.current,
+    itemData,
+  };
 
   // Reanimated Shared Values
   const translateX = useSharedValue(0);
@@ -88,10 +120,143 @@ export default function ScannerScreen({ navigation }) {
   const focusX = useSharedValue(0);
   const focusY = useSharedValue(0);
 
+  // --- HOOKS SECTION STABILIZATION ---
+  
+  const handleScanCallback = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setScanned(false);
+    setIsScanningActive(true);
+    setBarcodeResult(null);
+    setCurrentBarcode(null);
+  }, []);
+
+  const navigateToShelfCallback = useCallback(() => navigation.navigate('MyShelf'), [navigation]);
+
+  const tapGesture = Gesture.Tap().onEnd((event) => {
+    const { x, y } = event;
+    runOnJS(setFocusPoint)({ x: x / width, y: y / height });
+    focusX.value = x - 30;
+    focusY.value = y - 30;
+    focusOpacity.value = 1;
+    focusOpacity.value = withDelay(500, withTiming(0, { duration: 300 }));
+  });
+
+  const rFocusStyle = useAnimatedStyle(() => ({
+    opacity: focusOpacity.value,
+    transform: [{ translateX: focusX.value }, { translateY: focusY.value }],
+  }));
+
+  // 3. FIX HOOK RULES: Move useMemos right after their hook dependencies. Never conditional.
+  const navBarComponent = useMemo(() => {
+    // 2. NAV BAR STABILITY: Do not return null, strictly use 'display: none' to avoid component re-mounts
+    const isHidden = showModal || showFullCamera || barcodeResult;
+    return (
+      <View style={[styles.navBarContainer, { display: isHidden ? 'none' : 'flex' }]}>
+        <BlurView intensity={70} tint="dark" style={styles.navBarBlur}>
+          <TouchableOpacity style={styles.navIconBtn} disabled>
+            <Ionicons name="scan-outline" size={28} color="#4ade80" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.mainScanBtn, isScanningActive && styles.mainScanBtnActive]} onPress={handleScanCallback}>
+            <Ionicons name="scan" size={32} color={isScanningActive ? "#4ade80" : "#E0E0E0"} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navIconBtn} onPress={navigateToShelfCallback}>
+            <Ionicons name="library-outline" size={28} color="#E0E0E0" />
+          </TouchableOpacity>
+        </BlurView>
+      </View>
+    );
+  }, [showModal, showFullCamera, barcodeResult, isScanningActive, handleScanCallback, navigateToShelfCallback]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const onBarcodeScanned = useCallback(async ({ type, data }) => {
+    const { isScanningActive, scanned, savedResults } = stateRef.current;
+    if (!isScanningActive || scanned) return;
+    setIsScanningActive(false);
+    setScanned(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const saved = savedResults[data];
+    setCurrentBarcode(data);
+    currentBarcodeRef.current = data;
+
+    if (saved) {
+      setItemData({
+        name: saved.productName || `Product ${data}`,
+        image: saved.imageUrl || null,
+        notes: saved.notes || '',
+        verdict: saved.result,
+        date: saved.dateString || (saved.scannedAt ? new Date(saved.scannedAt).toLocaleDateString() : null),
+        loading: false,
+      });
+      setIsLoading(false);
+      setShowModal(true);
+      translateX.value = 0;
+      return;
+    }
+
+    setItemData({
+      name: 'Загрузка...',
+      image: null,
+      notes: '',
+      verdict: null,
+      date: null,
+      loading: true,
+    });
+    setIsLoading(true);
+    setShowModal(true);
+    translateX.value = 0;
+
+    try {
+      const response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${data}.json`);
+      const json = await response.json();
+      
+      if (currentBarcodeRef.current !== data) return;
+
+      if (json && json.product) {
+        const product = json.product;
+        const name = product.product_name || product.brands || data;
+        const image = product.image_front_url || null;
+        setItemData(prev => ({ ...prev, name: name, image: image }));
+      } else {
+        setItemData(prev => ({ ...prev, name: `Product ${data}` }));
+      }
+    } catch (error) {
+      if (currentBarcodeRef.current !== data) return;
+      setItemData(prev => ({ ...prev, name: `Product ${data}` }));
+    } finally {
+      if (currentBarcodeRef.current === data) {
+        setItemData(prev => ({ ...prev, loading: false }));
+        setIsLoading(false);
+      }
+    }
+  }, []);
+
+  const cameraComponent = useMemo(() => (
+    <>
+      {/* 4. CAMERA & LAYOUT: isFocused inside useMemo and absoluteFill used securely */}
+      {isFocused && (
+        <CameraView
+          key="main-camera"
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          onBarcodeScanned={onBarcodeScanned}
+          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "qr"] }}
+          focusPoint={focusPoint}
+          pictureSize="1920x1080"
+        />
+      )}
+      <GestureDetector gesture={tapGesture}>
+        <View style={StyleSheet.absoluteFill} />
+      </GestureDetector>
+      <Animated.View style={[styles.focusFrame, rFocusStyle]} pointerEvents="none" />
+    </>
+  ), [isFocused, onBarcodeScanned, focusPoint, rFocusStyle, tapGesture]);
+
   useFocusEffect(
     useCallback(() => {
       loadSavedResults();
-      setCanScan(false);
+      setIsScanningActive(false); // Require manual scan trigger
       setScanned(false);
     }, [])
   );
@@ -134,102 +299,25 @@ export default function ScannerScreen({ navigation }) {
     setSavedResults(data);
   };
 
-  const onBarcodeScanned = async ({ type, data }) => {
-    if (!canScan || scanned) return;
-    setCanScan(false);
-    setScanned(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    // Check if already saved (using most recent data)
-    const saved = savedResults[data];
-
-    setCurrentBarcode(data);
-    currentBarcodeRef.current = data;
-
-    if (saved) {
-      // Local Hit
-      setEditableName(saved.productName || `Product ${data}`);
-      setSelectedImage(saved.imageUrl || null);
-      setModalNotes(saved.notes || '');
-      setExistingVerdict(saved.result);
-      setLastScannedDate(saved.dateString || (saved.scannedAt ? new Date(saved.scannedAt).toLocaleDateString() : null));
-      setProductLoading(false);
-      setIsLoading(false);
-      setShowModal(true);
-      translateX.value = 0;
-      return;
-    }
-
-    // Local Miss
-    // Instant Reaction
-    setProductLoading(true);
-    setIsLoading(true);
-    setEditableName('Загрузка...');
-    setSelectedImage(null);
-    setModalNotes('');
-    setExistingVerdict(null);
-    setLastScannedDate(null);
-    setShowModal(true);
-    translateX.value = 0;
-
-    try {
-      // The 'Lucky' API (v0, world)
-      const response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${data}.json`);
-      const json = await response.json();
-      
-      if (currentBarcodeRef.current !== data) return;
-
-      if (json && json.product) {
-        const product = json.product;
-        // Data Mapping (v0 style)
-        const name = product.product_name || product.brands || data;
-        const image = product.image_front_url || null;
-        setEditableName(name);
-        setSelectedImage(image);
-      } else {
-        setEditableName(`Product ${data}`);
-      }
-    } catch (error) {
-      if (currentBarcodeRef.current !== data) return;
-      setEditableName(`Product ${data}`);
-    } finally {
-      if (currentBarcodeRef.current === data) {
-        setProductLoading(false);
-        setIsLoading(false);
-      }
-    }
-  };
-
   const takePhoto = async () => {
-    if (fullCameraRef.current) {
+    if (cameraRef.current) {
       try {
-        const photo = await fullCameraRef.current.takePictureAsync({
+        // For Pixel 6 Pro optimization:
+        // - quality: 0.8 for good compression.
+        // - skipProcessing: true for faster capture, as we handle the file ourselves.
+        // - Resolution is set via the `pictureSize` prop on the CameraView component.
+        const photo = await cameraRef.current.takePictureAsync({
           quality: 0.8,
+          skipProcessing: true,
         });
         if (photo.uri) {
-          const permanentUri = FileSystem.documentDirectory + Date.now() + '.jpg';
-          await FileSystem.copyAsync({ from: photo.uri, to: permanentUri });
-          setSelectedImage(permanentUri);
+          setItemData(prev => ({ ...prev, image: photo.uri }));
           setShowFullCamera(false);
         }
       } catch (error) {
-        console.log('Error taking photo:', error);
         Alert.alert('Ошибка', 'Не удалось сделать фото');
       }
     }
-  };
-
-  const handleScan = () => {
-    // Reset scanner state to force a new scan attempt
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setScanned(false);
-    setCanScan(true);
-    setBarcodeResult(null);
-    setCurrentBarcode(null);
-    
-    setTimeout(() => {
-      setCanScan(false);
-    }, 2000);
   };
 
   const pickImage = async () => {
@@ -237,33 +325,26 @@ export default function ScannerScreen({ navigation }) {
       Alert.alert('Фото товара', 'Выберите источник', [
         {
           text: 'Камера',
-          onPress: () => setShowFullCamera(true),
+          onPress: () => requestAnimationFrame(() => setShowFullCamera(true)),
         },
         {
           text: 'Галерея',
           onPress: async () => {
             try {
-              console.log('Requesting gallery permissions...');
               const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
               if (status !== 'granted') {
                 Alert.alert('Ошибка', 'Нужен доступ к галерее');
                 return;
               }
-              console.log('Launching gallery...');
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: 'images',
                 allowsEditing: false,
                 quality: 0.5,
               });
-              console.log('Gallery result:', result);
               if (!result.canceled && result.assets && result.assets.length > 0) {
-                const fileName = Date.now() + '.jpg';
-                const permanentUri = FileSystem.documentDirectory + fileName;
-                await FileSystem.copyAsync({ from: result.assets[0].uri, to: permanentUri });
-                setSelectedImage(permanentUri);
+                setItemData(prev => ({ ...prev, image: result.assets[0].uri }));
               }
             } catch (error) {
-              console.log('Gallery error:', error);
               Alert.alert('Ошибка', 'Не удалось выбрать фото');
             }
           },
@@ -271,39 +352,87 @@ export default function ScannerScreen({ navigation }) {
         { text: 'Отмена', style: 'cancel' },
       ]);
     } catch (e) {
-      console.log('PickImage error:', e);
     }
   };
 
-  const handleSwipeComplete = (verdict) => {
-    if (existingVerdict && existingVerdict !== verdict) {
-      Alert.alert(
-        'Change Verdict?',
-        `You previously ${existingVerdict === 'like' ? 'liked' : 'disliked'} this product. Are you sure you want to move it to ${verdict === 'like' ? 'Liked' : 'Disliked'}?`,
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => {
-              translateX.value = withSpring(0);
-            },
-          },
-          { text: 'Confirm', onPress: () => finishSwipe(verdict) },
-        ]
-      );
-    } else {
-      finishSwipe(verdict);
-    }
-  };
+  const saveResult = useCallback((result) => {
+    const bc = currentBarcodeRef.current;
+    const ps = stateRef.current.itemData;
 
-  const finishSwipe = (verdict) => {
+    // 5. OPTIMISTIC UI: Perform 1 single state update unblocking rendering operations
+    setShowModal(false);
+    setScanned(false);
+    setIsScanningActive(false);
+    setCurrentBarcode(null);
+    currentBarcodeRef.current = null;
+    setItemData(initialItemData);
+
+    if (bc) {
+      const productData = {
+        name: ps.name.trim() || undefined,
+        image: ps.image || undefined,
+        notes: ps.notes.trim(),
+      };
+
+      // Optimistically keep the local cache synced for immediate re-scans
+      setSavedResults(prev => ({
+        ...prev,
+        [bc]: { result, productName: productData.name, imageUrl: productData.image, notes: productData.notes, scannedAt: Date.now() }
+      }));
+
+      // Push all cross-screen updates and File System I/O to the service in the background
+      ProductService.saveProductBackground(bc, result, productData, stateRef.current.savedResults);
+    }
+  }, []);
+
+  const finishSwipe = useCallback((verdict) => {
+    saveResult(verdict);
+  }, [saveResult]);
+
+  const triggerSwipeAnimation = useCallback((verdict) => {
     if (verdict === 'like') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    saveResult(verdict);
-  };
+
+    const targetX = verdict === 'like' ? width * 1.5 : -width * 1.5;
+    translateX.value = withSpring(targetX, { damping: 20, stiffness: 90 }, (finished) => {
+      if (finished) {
+        runOnJS(finishSwipe)(verdict);
+      }
+    });
+  }, [translateX, finishSwipe]);
+
+  const handleSwipeComplete = useCallback((verdict) => {
+    const itemBarcode = currentBarcodeRef.current;
+    const itemExists = stateRef.current.savedResults[itemBarcode];
+
+    if (itemExists && itemExists.result !== verdict) {
+      Alert.alert(
+        'Изменить решение?',
+        `Вы ранее отметили этот товар как "${itemExists.result}". Изменить на "${verdict}"?`,
+        [
+          {
+            text: 'Отмена',
+            style: 'cancel',
+            onPress: () => {
+              translateX.value = withSpring(0);
+              translateY.value = withSpring(0);
+            },
+          },
+          {
+            text: 'Подтвердить',
+            onPress: () => {
+              triggerSwipeAnimation(verdict);
+            },
+          },
+        ]
+      );
+    } else {
+      triggerSwipeAnimation(verdict);
+    }
+  }, [translateX, translateY, triggerSwipeAnimation]);
 
   const pan = Gesture.Pan()
     .onUpdate((event) => {
@@ -320,10 +449,7 @@ export default function ScannerScreen({ navigation }) {
       hapticTriggered.value = false;
       if (Math.abs(translateX.value) > 100) {
         const direction = translateX.value > 0 ? 'like' : 'dislike';
-        const targetX = direction === 'like' ? width + 200 : -width - 200;
-        translateX.value = withSpring(targetX, { velocity: 50 }, () => {
-          runOnJS(handleSwipeComplete)(direction);
-        });
+        runOnJS(handleSwipeComplete)(direction);
         translateY.value = withSpring(0);
       } else if (event.translationY > 150) {
         runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Light);
@@ -337,22 +463,9 @@ export default function ScannerScreen({ navigation }) {
       }
     });
 
-  const tapGesture = Gesture.Tap().onEnd((event) => {
-    const { x, y } = event;
-    runOnJS(setFocusPoint)({ x: x / width, y: y / height });
-    focusX.value = x - 30;
-    focusY.value = y - 30;
-    focusOpacity.value = 1;
-    focusOpacity.value = withDelay(500, withTiming(0, { duration: 300 }));
-  });
-
-  const rFocusStyle = useAnimatedStyle(() => ({
-    opacity: focusOpacity.value,
-    transform: [{ translateX: focusX.value }, { translateY: focusY.value }],
-  }));
-
   const rCardStyle = useAnimatedStyle(() => {
     const rotate = interpolate(translateX.value, [-width, width], [-15, 15]);
+    
     return {
       transform: [
         { translateX: translateX.value },
@@ -362,48 +475,18 @@ export default function ScannerScreen({ navigation }) {
     };
   });
 
-  const saveResult = async (result) => {
-    try {
-      const newResults = await saveBarcodeResult(currentBarcode, result, savedResults, {
-        productName: editableName.trim() || undefined,
-        imageUrl: selectedImage || undefined,
-        notes: modalNotes.trim(),
-        dateString: new Date().toLocaleDateString(),
-      });
-      setSavedResults(newResults);
-      
-      setShowModal(false);
-      setScanned(false);
-      setCurrentBarcode(null);
-      currentBarcodeRef.current = null;
-      setModalNotes('');
-      setEditableName('');
-      setSelectedImage(null);
-      setExistingVerdict(null);
-      setLastScannedDate(null);
-      translateX.value = 0;
-      translateY.value = 0;
-    } catch (error) {
-      console.error('Error saving result:', error);
-      Alert.alert('Ошибка', 'Не удалось сохранить результат');
-    }
-  };
-
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
     Haptics.selectionAsync();
     setShowFullCamera(false);
     setShowModal(false);
     setScanned(false);
+    setIsScanningActive(false); // Require manual scan trigger when modal is closed
     setCurrentBarcode(null);
     currentBarcodeRef.current = null;
-    setModalNotes('');
-    setEditableName('');
-    setSelectedImage(null);
-    setExistingVerdict(null);
-    setLastScannedDate(null);
+    setItemData(initialItemData);
     translateX.value = 0;
     translateY.value = 0;
-  };
+  }, [translateX, translateY]);
 
   if (!permission) {
     return (
@@ -428,43 +511,9 @@ export default function ScannerScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* 1. Full Screen Camera */}
-      {isFocused && (
-        <CameraView
-          key={isFocused ? 'active' : 'inactive'}
-          ref={cameraRef}
-          style={StyleSheet.absoluteFillObject}
-          facing="back"
-          onBarcodeScanned={(scanned || !canScan) ? undefined : onBarcodeScanned}
-          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "qr"] }}
-          focusPoint={focusPoint}
-        />
-      )}
+      {cameraComponent}
 
-      <GestureDetector gesture={tapGesture}>
-        <View style={StyleSheet.absoluteFill} />
-      </GestureDetector>
-      
-      <Animated.View style={[styles.focusFrame, rFocusStyle]} pointerEvents="none" />
-
-      {/* Navigation Bar & Scanner Controls */}
-      {!showModal && !showFullCamera && !barcodeResult && (
-        <View style={styles.navBarContainer}>
-          <BlurView intensity={70} tint="dark" style={styles.navBarBlur}>
-            <TouchableOpacity style={styles.navIconBtn} disabled>
-              <Ionicons name="scan-outline" size={28} color="#4ade80" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.mainScanBtn} onPress={handleScan}>
-              <Ionicons name="scan" size={32} color="#E0E0E0" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.navIconBtn} onPress={() => navigation.navigate('MyShelf')}>
-              <Ionicons name="library-outline" size={28} color="#E0E0E0" />
-            </TouchableOpacity>
-          </BlurView>
-        </View>
-      )}
+      {navBarComponent}
 
       {/* Flash Overlay */}
       {isFlashing && (
@@ -489,7 +538,7 @@ export default function ScannerScreen({ navigation }) {
         </View>
       )}
 
-      {showModal && (
+      {showModal && !showFullCamera && (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={20}
@@ -500,8 +549,14 @@ export default function ScannerScreen({ navigation }) {
           </View>
 
           <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.modalContentWrap, rCardStyle]}>
-            <BlurView intensity={70} tint="dark" style={styles.modalContent}>
+            <Animated.View 
+              style={[
+                styles.modalContentWrap, 
+                rCardStyle,
+              ]}
+              collapsable={false}
+            >
+              <BlurView intensity={70} tint="dark" style={styles.modalContent}>
                 <ScrollView
                   style={{ width: '100%' }}
                   contentContainerStyle={{ alignItems: 'center' }}
@@ -518,13 +573,13 @@ export default function ScannerScreen({ navigation }) {
               }} />
               <Text style={styles.modalTitle}>Штрихкод обнаружен</Text>
               <View style={styles.modalImageRow}>
-                <TouchableOpacity onPress={() => setShowFullCamera(true)} activeOpacity={0.8}>
-                  <ProductImage imageUrl={selectedImage} size={IMAGE_SIZE} />
+                <TouchableOpacity onPress={() => requestAnimationFrame(() => setShowFullCamera(true))} activeOpacity={0.8}>
+                  <ProductImage imageUrl={itemData.image} size={IMAGE_SIZE} />
                   <View style={styles.editBadge}>
                     <Ionicons name="camera" size={14} color="#fff" />
                   </View>
                 </TouchableOpacity>
-                {productLoading && (
+                {itemData.loading && (
                   <View style={styles.loaderWrap}>
                     <ActivityIndicator size="small" color="#E0E0E0" />
                   </View>
@@ -532,23 +587,23 @@ export default function ScannerScreen({ navigation }) {
               </View>
               <TextInput
                 style={styles.nameInput}
-                value={editableName}
-                onChangeText={setEditableName}
+                value={itemData.name}
+                onChangeText={(text) => setItemData(prev => ({ ...prev, name: text }))}
                 placeholder="Название товара"
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
                 multiline
               />
-              {existingVerdict && (
+              {itemData.verdict && (
                 <View style={styles.verdictContainer}>
                   <View style={styles.circularIcon}>
                     <Ionicons 
-                      name={existingVerdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
+                      name={itemData.verdict === 'like' ? 'thumbs-up' : 'thumbs-down'} 
                       size={20} 
                       color="#E0E0E0" 
                     />
                   </View>
-                  {lastScannedDate && (
-                    <Text style={styles.dateText}>Added on: {lastScannedDate}</Text>
+                  {itemData.date && (
+                    <Text style={styles.dateText}>Added on: {itemData.date}</Text>
                   )}
                 </View>
               )}
@@ -560,27 +615,14 @@ export default function ScannerScreen({ navigation }) {
                 style={styles.notesInput}
                 placeholder="Короткий комментарий (по желанию)"
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
-                value={modalNotes}
-                onChangeText={setModalNotes}
+                value={itemData.notes}
+                onChangeText={(text) => setItemData(prev => ({ ...prev, notes: text }))}
                 multiline
                 maxLength={300}
               />
-              <View style={styles.actionButtonsContainer}>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handleSwipeComplete('dislike')}
-                >
-                  <MaterialCommunityIcons name="thumb-down-outline" size={28} color="#E0E0E0" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handleSwipeComplete('like')}
-                >
-                  <MaterialCommunityIcons name="thumb-up-outline" size={28} color="#E0E0E0" />
-                </TouchableOpacity>
-              </View>
+              <ActionButtons onSwipeComplete={handleSwipeComplete} />
                 </ScrollView>
-            </BlurView>
+              </BlurView>
           </Animated.View>
           </GestureDetector>
         </KeyboardAvoidingView>
@@ -588,17 +630,10 @@ export default function ScannerScreen({ navigation }) {
 
       {showFullCamera && (
         <View style={styles.fullCameraOverlay}>
-          {isFocused && (
-            <CameraView
-              key={isFocused ? 'rephoto-active' : 'rephoto-inactive'}
-              ref={fullCameraRef}
-              style={StyleSheet.absoluteFillObject}
-              facing="back"
-            />
-          )}
           
           <View style={styles.captureContainer}>
-            <TouchableOpacity style={styles.roundCaptureBtn} onPress={takePhoto}>
+            <TouchableOpacity style={styles.roundCaptureBtn} onPress={takePhoto} activeOpacity={0.8}>
+              <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
               <Ionicons name="camera" size={32} color="#E0E0E0" />
             </TouchableOpacity>
           </View>
@@ -692,8 +727,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     borderRadius: 24,
     overflow: 'visible',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
     position: 'relative',
   },
   modalContent: {
@@ -867,7 +900,7 @@ const styles = StyleSheet.create({
   },
   fullCameraOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#000',
+    backgroundColor: 'transparent',
     zIndex: 3000,
     justifyContent: 'center',
     alignItems: 'center',
@@ -878,15 +911,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#000',
   },
-  captureBtn: {
+  captureContainer: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 50,
+    alignSelf: 'center',
+  },
+  roundCaptureBtn: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(40, 40, 45, 0.7)',
-    borderWidth: 4,
+    borderWidth: 2,
     borderColor: 'rgba(80, 80, 85, 0.3)',
+    backgroundColor: 'rgba(40, 40, 45, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
   },
   cancelCameraBtn: {
     position: 'absolute',
@@ -933,5 +972,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.3)',
+  },
+  mainScanBtnActive: {
+    borderColor: '#4ade80',
+    backgroundColor: 'rgba(74, 222, 128, 0.2)',
   },
 });
