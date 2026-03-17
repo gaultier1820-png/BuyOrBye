@@ -82,6 +82,54 @@ const ActionButtons = React.memo(({ onSwipeComplete }) => (
   </View>
 ));
 
+const CameraAndNavBar = React.memo(({
+  isFocused,
+  onBarcodeScanned,
+  focusPoint,
+  tapGesture,
+  rFocusStyle,
+  isScanningActive,
+  handleScanCallback,
+  navigateToShelfCallback,
+  rNavBarStyle,
+  cameraRef
+}) => {
+  return (
+    <>
+      {isFocused && (
+        <CameraView
+          ref={cameraRef}
+          key="main-camera"
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          onBarcodeScanned={onBarcodeScanned}
+          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "qr"] }}
+          focusPoint={focusPoint}
+          pictureSize="1920x1080"
+        />
+      )}
+      <GestureDetector gesture={tapGesture}>
+        <View style={StyleSheet.absoluteFill} />
+      </GestureDetector>
+      <Animated.View style={[styles.focusFrame, rFocusStyle]} pointerEvents="none" />
+
+      <Animated.View style={[styles.navBarContainer, rNavBarStyle]}>
+        <BlurView intensity={70} tint="dark" style={styles.navBarBlur}>
+          <TouchableOpacity style={styles.navIconBtn} disabled>
+            <Ionicons name="scan-outline" size={28} color="#4ade80" />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.mainScanBtn, isScanningActive && styles.mainScanBtnActive]} onPress={handleScanCallback}>
+            <Ionicons name="scan" size={32} color={isScanningActive ? "#4ade80" : "#E0E0E0"} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navIconBtn} onPress={navigateToShelfCallback}>
+            <Ionicons name="library-outline" size={28} color="#E0E0E0" />
+          </TouchableOpacity>
+        </BlurView>
+      </Animated.View>
+    </>
+  );
+});
+
 export default function ScannerScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const isFocused = useIsFocused();
@@ -119,6 +167,7 @@ export default function ScannerScreen({ navigation }) {
   const focusOpacity = useSharedValue(0);
   const focusX = useSharedValue(0);
   const focusY = useSharedValue(0);
+  const navBarTranslateY = useSharedValue(0);
 
   // --- HOOKS SECTION STABILIZATION ---
   
@@ -132,40 +181,30 @@ export default function ScannerScreen({ navigation }) {
 
   const navigateToShelfCallback = useCallback(() => navigation.navigate('MyShelf'), [navigation]);
 
-  const tapGesture = Gesture.Tap().onEnd((event) => {
-    const { x, y } = event;
-    runOnJS(setFocusPoint)({ x: x / width, y: y / height });
-    focusX.value = x - 30;
-    focusY.value = y - 30;
-    focusOpacity.value = 1;
-    focusOpacity.value = withDelay(500, withTiming(0, { duration: 300 }));
-  });
+  const tapGesture = useMemo(() => {
+    return Gesture.Tap().onEnd((event) => {
+      const { x, y } = event;
+      runOnJS(setFocusPoint)({ x: x / width, y: y / height });
+      focusX.value = x - 30;
+      focusY.value = y - 30;
+      focusOpacity.value = 1;
+      focusOpacity.value = withDelay(500, withTiming(0, { duration: 300 }));
+    });
+  }, [focusX, focusY, focusOpacity]);
 
   const rFocusStyle = useAnimatedStyle(() => ({
     opacity: focusOpacity.value,
     transform: [{ translateX: focusX.value }, { translateY: focusY.value }],
   }));
 
-  // 3. FIX HOOK RULES: Move useMemos right after their hook dependencies. Never conditional.
-  const navBarComponent = useMemo(() => {
-    // 2. NAV BAR STABILITY: Do not return null, strictly use 'display: none' to avoid component re-mounts
+  useEffect(() => {
     const isHidden = showModal || showFullCamera || barcodeResult;
-    return (
-      <View style={[styles.navBarContainer, { display: isHidden ? 'none' : 'flex' }]}>
-        <BlurView intensity={70} tint="dark" style={styles.navBarBlur}>
-          <TouchableOpacity style={styles.navIconBtn} disabled>
-            <Ionicons name="scan-outline" size={28} color="#4ade80" />
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.mainScanBtn, isScanningActive && styles.mainScanBtnActive]} onPress={handleScanCallback}>
-            <Ionicons name="scan" size={32} color={isScanningActive ? "#4ade80" : "#E0E0E0"} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navIconBtn} onPress={navigateToShelfCallback}>
-            <Ionicons name="library-outline" size={28} color="#E0E0E0" />
-          </TouchableOpacity>
-        </BlurView>
-      </View>
-    );
-  }, [showModal, showFullCamera, barcodeResult, isScanningActive, handleScanCallback, navigateToShelfCallback]);
+    navBarTranslateY.value = withTiming(isHidden ? 200 : 0, { duration: 250 });
+  }, [showModal, showFullCamera, barcodeResult, navBarTranslateY]);
+
+  const rNavBarStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: navBarTranslateY.value }],
+  }));
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const onBarcodeScanned = useCallback(async ({ type, data }) => {
@@ -230,28 +269,6 @@ export default function ScannerScreen({ navigation }) {
       }
     }
   }, []);
-
-  const cameraComponent = useMemo(() => (
-    <>
-      {/* 4. CAMERA & LAYOUT: isFocused inside useMemo and absoluteFill used securely */}
-      {isFocused && (
-        <CameraView
-          key="main-camera"
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          onBarcodeScanned={onBarcodeScanned}
-          barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "qr"] }}
-          focusPoint={focusPoint}
-          pictureSize="1920x1080"
-        />
-      )}
-      <GestureDetector gesture={tapGesture}>
-        <View style={StyleSheet.absoluteFill} />
-      </GestureDetector>
-      <Animated.View style={[styles.focusFrame, rFocusStyle]} pointerEvents="none" />
-    </>
-  ), [isFocused, onBarcodeScanned, focusPoint, rFocusStyle, tapGesture]);
 
   useFocusEffect(
     useCallback(() => {
@@ -356,16 +373,16 @@ export default function ScannerScreen({ navigation }) {
   };
 
   const saveResult = useCallback((result) => {
+    setShowModal(false);
+
     const bc = currentBarcodeRef.current;
     const ps = stateRef.current.itemData;
 
-    // 5. OPTIMISTIC UI: Perform 1 single state update unblocking rendering operations
-    setShowModal(false);
+    setItemData({ ...initialItemData });
     setScanned(false);
     setIsScanningActive(false);
     setCurrentBarcode(null);
     currentBarcodeRef.current = null;
-    setItemData(initialItemData);
 
     if (bc) {
       const productData = {
@@ -511,9 +528,18 @@ export default function ScannerScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {cameraComponent}
-
-      {navBarComponent}
+      <CameraAndNavBar 
+        isFocused={isFocused}
+        onBarcodeScanned={onBarcodeScanned}
+        focusPoint={focusPoint}
+        tapGesture={tapGesture}
+        rFocusStyle={rFocusStyle}
+        isScanningActive={isScanningActive}
+        handleScanCallback={handleScanCallback}
+        navigateToShelfCallback={navigateToShelfCallback}
+        rNavBarStyle={rNavBarStyle}
+        cameraRef={cameraRef}
+      />
 
       {/* Flash Overlay */}
       {isFlashing && (
@@ -545,7 +571,6 @@ export default function ScannerScreen({ navigation }) {
           style={styles.modalOverlay}
         >
           <View style={styles.modalBackdrop}>
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
           </View>
 
           <GestureDetector gesture={pan}>
@@ -717,10 +742,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
+    elevation: 1000,
   },
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   modalContentWrap: {
     width: width * 0.9,
